@@ -6,6 +6,12 @@ from datetime import date, datetime
 import requests
 from bs4 import BeautifulSoup
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
+
 
 logger = logging.getLogger("scrapers")
 
@@ -21,6 +27,18 @@ NBL_DATA_URL = "https://app.nextbigloan.co.in/admin/dateWiseDisbursed"
 
 NBL_USERNAME = os.getenv("NBL_USERNAME", "")
 NBL_PASSWORD = os.getenv("NBL_PASSWORD", "")
+
+CP_LOGIN_URL = "https://app.creditpey.in/"
+CP_DATA_URL = "https://app.creditpey.in/reporting/list/disbursed"
+
+CP_USERNAME = os.getenv("CP_USERNAME", "")
+CP_PASSWORD = os.getenv("CP_PASSWORD", "")
+
+LR_LOGIN_URL = "https://app.lendingrupee.in/"
+LR_DATA_URL = "https://app.lendingrupee.in/reporting/list/disbursed"
+
+LR_USERNAME = os.getenv("LR_USERNAME", "")
+LR_PASSWORD = os.getenv("LR_PASSWORD", "")
 
 
 def _nbl_login(session: requests.Session) -> requests.Session:
@@ -474,15 +492,214 @@ def fetch_nbl_disbursed_df(year: int, month: int) -> list[dict]:
     return normalized
 
 
+def _crm_login(session: requests.Session, *, label: str, login_url: str, username: str, password: str) -> None:
+    if not username or not password:
+        raise RuntimeError(f"Missing {label} credentials. Set {label}_USERNAME and {label}_PASSWORD environment variables.")
+
+    logger.info("%s: fetching login page %s", label, login_url)
+    r = session.get(login_url, timeout=60, verify=False)
+    r.raise_for_status()
+
+    soup = BeautifulSoup(r.text, "html.parser")
+    form = soup.find("form")
+    if not form:
+        raise RuntimeError(f"{label} login form not found")
+
+    form_action = form.get("action") or login_url
+    if not form_action.startswith("http"):
+        base = login_url.rstrip("/")
+        if form_action.startswith("/"):
+            form_action = base + form_action
+        else:
+            form_action = base + "/" + form_action
+
+    inputs = []
+    form_data: dict[str, str] = {}
+    for inp in form.find_all("input"):
+        name = inp.get("name")
+        if not name:
+            continue
+        itype = (inp.get("type") or "").lower()
+        inputs.append((name, itype))
+        form_data[name] = inp.get("value", "")
+
+    logger.info("%s: found login form action=%s", label, form_action)
+    logger.info("%s: form inputs: %s", label, inputs)
+
+    username_field = None
+    password_field = None
+    for name, itype in inputs:
+        n = name.lower()
+        if itype == "password" or "pass" in n:
+            if not password_field:
+                password_field = name
+        if any(x in n for x in ["user", "email", "login", "employee", "userid", "username", "employeeid"]):
+            if not username_field and itype != "password":
+                username_field = name
+
+    if not username_field:
+        text_inp = form.find("input", {"type": "text"})
+        if text_inp and text_inp.get("name"):
+            username_field = text_inp["name"]
+
+    if not password_field:
+        pass_inp = form.find("input", {"type": "password"})
+        if pass_inp and pass_inp.get("name"):
+            password_field = pass_inp["name"]
+
+    if not username_field or not password_field:
+        raise RuntimeError(
+            f"{label} could not determine username/password fields. Found username_field={username_field}, password_field={password_field}"
+        )
+
+    form_data[username_field] = username
+    form_data[password_field] = password
+
+    headers = {
+        "Referer": login_url,
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    }
+
+    logger.info(
+        "%s: POST login %s with data: %s",
+        label,
+        form_action,
+        {k: "***" if k == password_field else v for k, v in form_data.items()},
+    )
+    r2 = session.post(form_action, data=form_data, headers=headers, allow_redirects=True, timeout=60, verify=False)
+    r2.raise_for_status()
+    logger.info("%s: login response final url=%s status=%s bytes=%s", label, r2.url, r2.status_code, len(r2.text))
+
+    if "login" in (r2.url or "").lower() and "dashboard" not in (r2.url or "").lower():
+        raise RuntimeError(f"{label} login failed (final url={r2.url})")
+
+
+def _rows_from_any_html_table(html_text: str) -> list[dict]:
+    html_soup = BeautifulSoup(html_text, "html.parser")
+    table = html_soup.find("table")
+    if not table:
+        return []
+
+    headers_row: list[str] = []
+    thead = table.find("thead")
+    if thead:
+        headers_row = [th.get_text(" ", strip=True) for th in thead.find_all("th")]
+
+    rows_local: list[dict] = []
+    tbody = table.find("tbody") or table
+    for tr in tbody.find_all("tr"):
+        cells = [td.get_text(" ", strip=True) for td in tr.find_all(["td", "th"])]
+        if not cells:
+            continue
+        if headers_row and len(headers_row) == len(cells):
+            rows_local.append(dict(zip(headers_row, cells)))
+        else:
+            rows_local.append({f"col_{i+1}": v for i, v in enumerate(cells)})
+
+    return rows_local
+
+
+def _normalize_disbursed_rows(rows: list[dict], *, source: str, year: int, month: int) -> list[dict]:
+    def _get_any(d: dict, *keys):
+        for k in keys:
+            if k in d and d[k] not in (None, ""):
+                return d[k]
+        return None
+
+    normalized: list[dict] = []
+    for rec in rows:
+        disb = _get_any(
+            rec,
+            "Disbursal Date",
+            "Disbursed Date",
+            "disbursal_date",
+            "disbursed_date",
+            "Date",
+        )
+        disb_date = _parse_date_any(disb)
+        if not disb_date:
+            continue
+        if disb_date.year != year or disb_date.month != month:
+            continue
+
+        normalized.append(
+            {
+                "source": source,
+                "disbursal_date": disb_date,
+                "credit_by": str(_get_any(rec, "Credit By", "credit_by", "CM", "Sales") or "").strip(),
+                "loan_amount": _clean_amount(_get_any(rec, "Loan Amount", "loan_amount", "Amount", "Disbursed Amount", "disbursed_amount")),
+                "branch": str(_get_any(rec, "Branch", "branch") or "").strip(),
+                "state": str(_get_any(rec, "State", "state") or "").strip(),
+                "loan_no": str(_get_any(rec, "Loan No", "Loan No.", "loan_no", "Loan Number") or "").strip(),
+                "lead_id": str(_get_any(rec, "LeadID", "Lead Id", "lead_id", "Lead ID") or "").strip(),
+            }
+        )
+
+    return normalized
+
+
+def fetch_cp_disbursed_df(year: int, month: int) -> list[dict]:
+    if not CP_USERNAME or not CP_PASSWORD:
+        raise RuntimeError("Missing CP credentials. Set CP_USERNAME and CP_PASSWORD environment variables.")
+
+    start_d, end_d = _month_date_range(year, month)
+    logger.info("CP: fetching disbursed data for %04d-%02d (%s..%s)", year, month, start_d, end_d)
+
+    session = requests.Session()
+    _crm_login(session, label="CP", login_url=CP_LOGIN_URL, username=CP_USERNAME, password=CP_PASSWORD)
+
+    logger.info("CP: GET %s", CP_DATA_URL)
+    r = session.get(CP_DATA_URL, timeout=90, allow_redirects=True, verify=False)
+    r.raise_for_status()
+    logger.info("CP: response %s bytes=%s final_url=%s", r.status_code, len(r.text), r.url)
+
+    rows = _rows_from_any_html_table(r.text)
+    if not rows:
+        logger.warning("CP: fetched 0 rows")
+        return []
+
+    out = _normalize_disbursed_rows(rows, source="CP", year=year, month=month)
+    logger.info("CP: normalized rows=%s", len(out))
+    return out
+
+
+def fetch_lr_disbursed_df(year: int, month: int) -> list[dict]:
+    if not LR_USERNAME or not LR_PASSWORD:
+        raise RuntimeError("Missing LR credentials. Set LR_USERNAME and LR_PASSWORD environment variables.")
+
+    start_d, end_d = _month_date_range(year, month)
+    logger.info("LR: fetching disbursed data for %04d-%02d (%s..%s)", year, month, start_d, end_d)
+
+    session = requests.Session()
+    _crm_login(session, label="LR", login_url=LR_LOGIN_URL, username=LR_USERNAME, password=LR_PASSWORD)
+
+    logger.info("LR: GET %s", LR_DATA_URL)
+    r = session.get(LR_DATA_URL, timeout=90, allow_redirects=True, verify=False)
+    r.raise_for_status()
+    logger.info("LR: response %s bytes=%s final_url=%s", r.status_code, len(r.text), r.url)
+
+    rows = _rows_from_any_html_table(r.text)
+    if not rows:
+        logger.warning("LR: fetched 0 rows")
+        return []
+
+    out = _normalize_disbursed_rows(rows, source="LR", year=year, month=month)
+    logger.info("LR: normalized rows=%s", len(out))
+    return out
+
+
 def fetch_combined_disbursed_df(year: int, month: int) -> list[dict]:
     eli = fetch_eli_disbursed_df(year, month)
     nbl = fetch_nbl_disbursed_df(year, month)
+    cp = fetch_cp_disbursed_df(year, month)
+    lr = fetch_lr_disbursed_df(year, month)
     logger.info("NBL: fetched %s rows", len(nbl))
 
-    combined = list(eli) + list(nbl)
+    combined = list(eli) + list(nbl) + list(cp) + list(lr)
     combined = [r for r in combined if r.get("disbursal_date") and r.get("loan_amount") is not None]
     for r in combined:
         r["credit_by"] = str(r.get("credit_by") or "").strip()
 
-    logger.info("COMBINED: ELI=%s NBL=%s TOTAL=%s", len(eli), len(nbl), len(combined))
+    logger.info("COMBINED: ELI=%s NBL=%s CP=%s LR=%s TOTAL=%s", len(eli), len(nbl), len(cp), len(lr), len(combined))
     return combined

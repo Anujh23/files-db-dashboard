@@ -340,6 +340,105 @@ def api_daily_performance():
     )
 
 
+@app.get("/api/cp-top3")
+def api_cp_top3():
+    month = int(request.args.get("month", date.today().month))
+    year = int(request.args.get("year", date.today().year))
+    rows, err = _get_cached_df(year, month)
+    return jsonify({"top3": _top3(rows, "CP"), "error": err})
+
+
+@app.get("/api/lr-top3")
+def api_lr_top3():
+    month = int(request.args.get("month", date.today().month))
+    year = int(request.args.get("year", date.today().year))
+    rows, err = _get_cached_df(year, month)
+    return jsonify({"top3": _top3(rows, "LR"), "error": err})
+
+
+@app.get("/api/cp-top-state")
+def api_cp_top_state():
+    month = int(request.args.get("month", date.today().month))
+    year = int(request.args.get("year", date.today().year))
+    rows, err = _get_cached_df(year, month)
+    out = _top_state(rows, "CP")
+    out["error"] = err
+    return jsonify(out)
+
+
+@app.get("/api/lr-top-state")
+def api_lr_top_state():
+    month = int(request.args.get("month", date.today().month))
+    year = int(request.args.get("year", date.today().year))
+    rows, err = _get_cached_df(year, month)
+    out = _top_state(rows, "LR")
+    out["error"] = err
+    return jsonify(out)
+
+
+@app.get("/api/cp-lr-stats")
+def api_cp_lr_stats():
+    month = int(request.args.get("month", date.today().month))
+    year = int(request.args.get("year", date.today().year))
+    rows, err = _get_cached_df(year, month)
+
+    cp_total = sum(float(r.get("loan_amount") or 0.0) for r in rows if r.get("source") == "CP")
+    lr_total = sum(float(r.get("loan_amount") or 0.0) for r in rows if r.get("source") == "LR")
+    combined_total = cp_total + lr_total
+
+    cp_target = 50000000.0  # ₹5 Cr
+    lr_target = 50000000.0  # ₹5 Cr
+    combined_target = 100000000.0  # ₹10 Cr
+
+    cp_progress_pct = round(min(100.0, (cp_total / cp_target) * 100.0), 2) if cp_target else 0.0
+    lr_progress_pct = round(min(100.0, (lr_total / lr_target) * 100.0), 2) if lr_target else 0.0
+    combined_progress_pct = round(min(100.0, (combined_total / combined_target) * 100.0), 2) if combined_target else 0.0
+
+    cp_score = cp_progress_pct
+    lr_score = lr_progress_pct
+
+    return jsonify(
+        {
+            "month": month,
+            "year": year,
+            "error": err,
+            "cp_total": cp_total,
+            "lr_total": lr_total,
+            "combined_total": combined_total,
+            "cp_progress_pct": cp_progress_pct,
+            "lr_progress_pct": lr_progress_pct,
+            "combined_progress_pct": combined_progress_pct,
+            "cp_score": cp_score,
+            "lr_score": lr_score,
+        }
+    )
+
+
+@app.get("/api/cp-lr-daily")
+def api_cp_lr_daily():
+    month = int(request.args.get("month", date.today().month))
+    year = int(request.args.get("year", date.today().year))
+    rows, err = _get_cached_df(year, month)
+
+    days, cp_totals = _daily_totals(rows, "CP", year, month)
+    _, lr_totals = _daily_totals(rows, "LR", year, month)
+
+    return jsonify(
+        {
+            "current_month": _month_name(year, month),
+            "error": err,
+            "days": days,
+            "cp_daily_totals": cp_totals,
+            "lr_daily_totals": lr_totals,
+        }
+    )
+
+
+@app.get("/cp-lr")
+def cp_lr_page():
+    return render_template("cp_lr.html")
+
+
 @app.route('/favicon.ico')
 def favicon():
     static_dir = os.path.join(app.root_path, 'static')

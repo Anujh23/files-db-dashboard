@@ -1,0 +1,154 @@
+<!-- templates/cp_lr.html -->
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CP vs LR Dashboard - CreditPey vs LendingRupee</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+    <div class="dashboard">
+        <!-- Header -->
+        <div class="header">
+            <div class="welcome-text">CP vs LR Dashboard</div>
+            <div class="month-selector">
+                <button class="month-btn" onclick="changeMonth(-1)">← Prev</button>
+                <div class="current-month" id="current-month">January 2024</div>
+                <button class="month-btn" onclick="changeMonth(1)">Next →</button>
+            </div>
+        </div>
+
+        <!-- Profile -->
+        <div class="profile-section">
+            <div class="profile-card">
+                <div class="profile-avatar">
+                    <img id="profile-img" src="{{ url_for('static', filename='images/logo.png') }}" alt="Company Logo">
+                </div>
+            </div>
+
+            <div class="focus-tracker leader-progress-container">
+                <div class="focus-title">Combined Progress (CP + LR)</div>
+                <div class="leader-progress-track">
+                    <div id="focus-bar" class="leader-progress-bar"></div>
+                </div>
+                <div id="focus-text" class="leader-progress-text">0% of ₹10 Cr</div>
+            </div>
+        </div>
+
+        <!-- CP & LR Cards -->
+        <div class="metrics-grid">
+            <div class="metric-card eli-card" style="background: linear-gradient(135deg, #ff6b6b 0%, #ee5a5a 100%);">
+                <div class="metric-title">CP (CreditPey) Progress</div>
+                <div id="cp-score" class="metric-value">0%</div>
+                <div id="cp-trend" class="metric-trend trend-up">
+                    <span>↑</span>
+                    <span>Loading...</span>
+                </div>
+                <!-- CP Progress Bar -->
+                <div class="progress-container">
+                    <div class="progress-track">
+                        <div id="cp-progress-bar" class="progress-fill eli-fill" style="background: linear-gradient(90deg, #ff6b6b, #ee5a5a);"></div>
+                    </div>
+                    <div id="cp-progress-text" class="progress-text">0% of ₹5 Cr</div>
+                </div>
+                <div class="data-update" id="cp-update">Live</div>
+            </div>
+
+            <div class="metric-card nbl-card" style="background: linear-gradient(135deg, #4ecdc4 0%, #3dbdb4 100%);">
+                <div class="metric-title">LR (LendingRupee) Progress</div>
+                <div id="lr-score" class="metric-value">0%</div>
+                <div id="lr-trend" class="metric-trend trend-down">
+                </div>
+                <!-- LR Progress Bar -->
+                <div class="progress-container">
+                    <div class="progress-track">
+                        <div id="lr-progress-bar" class="progress-fill nbl-fill" style="background: linear-gradient(90deg, #4ecdc4, #3dbdb4);"></div>
+                    </div>
+                    <div id="lr-progress-text" class="progress-text">0% of ₹5 Cr</div>
+                </div>
+                <div class="data-update" id="lr-update">Live</div>
+            </div>
+        </div>
+
+        <!-- CP Top 3 -->
+        <div class="eli-top-section">
+            <div class="section-title">
+                <span>CP Leaders</span>
+            </div>
+            <ul class="top-list" id="cp-list">
+                <li class="top-item loading">
+                    <span class="rank-number">-</span>
+                    <span class="achiever-name">Loading...</span>
+                    <span class="achievement-value">-</span>
+                </li>
+            </ul>
+            <div class="top-state-box eli-state-box">
+                <div class="top-state-label">CP Top State</div>
+                <div id="cp-top-state-name" class="top-state-name">—</div>
+                <div id="cp-top-state-value" class="top-state-value">₹0</div>
+            </div>
+            <div class="update-time" id="cp-time">Updated: --:--:--</div>
+        </div>
+
+        <!-- Daily Graph -->
+        <div class="daily-graph-section">
+            <div class="graph-controls">
+                <div class="graph-title" id="graph-title">Daily Performance: CP vs LR</div>
+            </div>
+            <div class="daily-graph-container">
+                <div class="graph-canvas-container">
+                    <canvas id="dailyGraph"></canvas>
+                </div>
+                <div class="tooltip" id="graph-tooltip"></div>
+            </div>
+
+            <!-- Legend -->
+            <div class="graph-legend">
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #ff6b6b;"></div>
+                    <span class="legend-text eli-legend"><b>CP</b></span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #4ecdc4;"></div>
+                    <span class="legend-text nbl-legend"><b>LR</b></span>
+                </div>
+            </div>
+
+            <!-- Unit indicator -->
+            <div class="unit-indicator" id="unit-indicator"
+                style="font-size: 0.8rem; color: #6c7a89; margin-top: 15px; text-align: center;">
+            </div>
+        </div>
+
+        <!-- LR Top 3 -->
+        <div class="nbl-top-section">
+            <div class="section-title" style="font-size: 1rem;">LR Leaders</div>
+            <ul class="top-list" id="lr-list">
+                <li class="top-item loading">
+                    <span class="rank-number">-</span>
+                    <span class="achiever-name">Loading...</span>
+                    <span class="achievement-value">-</span>
+                </li>
+            </ul>
+            <div class="top-state-box nbl-state-box">
+                <div class="top-state-label">LR Top State</div>
+                <div id="lr-top-state-name" class="top-state-name">—</div>
+                <div id="lr-top-state-value" class="top-state-value">₹0</div>
+            </div>
+            <div class="update-time" id="lr-time">Updated: --:--:--</div>
+        </div>
+
+        <!-- Back to main dashboard link -->
+        <div style="text-align: center; margin-top: 20px;">
+            <a href="/" style="color: #5d9cec; text-decoration: none; font-size: 1rem;">← Back to ELI vs NBL Dashboard</a>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/cp_lr_dashboard.js') }}"></script>
+</body>
+
+</html>
