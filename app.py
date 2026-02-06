@@ -42,6 +42,47 @@ _cache: dict[tuple[int, int], dict] = {}
 _locks: dict[tuple[int, int], threading.Lock] = {}
 
 
+def _refresh_cache(key: tuple[int, int], year: int, month: int) -> None:
+    started = time.time()
+    try:
+        logger.info("Background refresh start for %s", key)
+        try:
+            rows = fetch_combined_disbursed_df(year, month)
+            err = None
+        except Exception as e:
+            err = f"{type(e).__name__}: {e}"
+            rows = []
+            logger.exception("Background refresh failed for %s", key)
+
+        elapsed = round(time.time() - started, 2)
+        logger.info("Background refresh finished for %s in %ss. Rows=%s Error=%s", key, elapsed, len(rows), err)
+
+        _cache[key] = {"ts": time.time(), "df": rows, "error": err, "refreshing": False}
+    finally:
+        # Ensure we always clear the refreshing flag even if something goes wrong
+        hit = _cache.get(key)
+        if hit:
+            hit["refreshing"] = False
+
+
+def _kickoff_refresh(year: int, month: int) -> None:
+    key = (year, month)
+    lock = _get_lock(key)
+
+    # Only one refresh thread per key
+    with lock:
+        hit = _cache.get(key)
+        if hit and hit.get("refreshing"):
+            return
+        if hit is None:
+            _cache[key] = {"ts": 0.0, "df": [], "error": "warming_up", "refreshing": True}
+        else:
+            hit["refreshing"] = True
+
+    t = threading.Thread(target=_refresh_cache, args=(key, year, month), daemon=True)
+    t.start()
+
+
 def _get_lock(key: tuple[int, int]) -> threading.Lock:
     lock = _locks.get(key)
     if lock is None:
@@ -59,39 +100,14 @@ def _get_cached_df(year: int, month: int):
             logger.warning("Cache hit with previous error for %s: %s", key, hit.get("error"))
         return hit["df"], hit.get("error")
 
-    lock = _get_lock(key)
-    if not lock.acquire(blocking=False):
-        logger.info("Fetch already in progress for %s. Waiting...", key)
-        with lock:
-            # After the in-progress fetch completes, return the cached value
-            hit2 = _cache.get(key) or {"df": [], "error": "fetch_in_progress_no_cache"}
-            return hit2.get("df", []), hit2.get("error")
+    # Cache is missing or stale: return immediately and refresh in background.
+    if hit:
+        if not hit.get("refreshing"):
+            _kickoff_refresh(year, month)
+        return hit.get("df", []), hit.get("error") or "stale"
 
-    try:
-        # Re-check cache after acquiring the lock
-        now = time.time()
-        hit = _cache.get(key)
-        if hit and (now - hit["ts"]) < _CACHE_TTL_SECONDS:
-            logger.info("Cache filled while waiting for lock for %s", key)
-            return hit["df"], hit.get("error")
-
-        logger.info("Cache miss for %s. Fetching ELI+NBL live...", key)
-        started = time.time()
-        try:
-            rows = fetch_combined_disbursed_df(year, month)
-            err = None
-        except Exception as e:
-            err = f"{type(e).__name__}: {e}"
-            rows = []
-            logger.exception("Fetch failed for %s", key)
-
-        elapsed = round(time.time() - started, 2)
-        logger.info("Fetch finished for %s in %ss. Rows=%s Error=%s", key, elapsed, len(rows), err)
-
-        _cache[key] = {"ts": time.time(), "df": rows, "error": err}
-        return rows, err
-    finally:
-        lock.release()
+    _kickoff_refresh(year, month)
+    return [], "warming_up"
 
 
 @app.errorhandler(Exception)
@@ -180,6 +196,27 @@ def home():
 @app.get("/api/health")
 def api_health():
     return jsonify({"ok": True})
+
+
+@app.post("/api/refresh")
+def api_refresh():
+    month = int(request.args.get("month", date.today().month))
+    year = int(request.args.get("year", date.today().year))
+    _kickoff_refresh(year, month)
+
+    key = (year, month)
+    hit = _cache.get(key) or {}
+    return jsonify(
+        {
+            "month": month,
+            "year": year,
+            "cache_ttl_seconds": _CACHE_TTL_SECONDS,
+            "refreshing": bool(hit.get("refreshing")),
+            "last_ts": hit.get("ts"),
+            "rows_total": len(hit.get("df", []) or []),
+            "last_error": hit.get("error"),
+        }
+    )
 
 
 @app.get("/api/debug")
