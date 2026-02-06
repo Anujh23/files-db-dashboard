@@ -1,0 +1,150 @@
+<!-- templates/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Neumorphic Dashboard - Daily Performance</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+    <div class="dashboard">
+        <!-- Header -->
+        <div class="header">
+            <div class="welcome-text">Daily Performance Dashboard</div>
+            <div class="month-selector">
+                <button class="month-btn" onclick="changeMonth(-1)">← Prev</button>
+                <div class="current-month" id="current-month">January 2024</div>
+                <button class="month-btn" onclick="changeMonth(1)">Next →</button>
+            </div>
+        </div>
+
+        <!-- Profile -->
+        <div class="profile-section">
+            <div class="profile-card">
+                <div class="profile-avatar">
+                    <img id="profile-img" src="{{ url_for('static', filename='images/logo.png') }}" alt="Company Logo">
+                </div>
+            </div>
+
+            <div class="focus-tracker leader-progress-container">
+                <div class="focus-title">Company Total Progress</div>
+                <div class="leader-progress-track">
+                    <div id="focus-bar" class="leader-progress-bar"></div>
+                </div>
+                <div id="focus-text" class="leader-progress-text">0% of ₹9.25 Cr</div>
+            </div>
+        </div>
+
+        <!-- ELI & NBL Cards -->
+        <div class="metrics-grid">
+            <div class="metric-card eli-card">
+                <div class="metric-title">ELI Progress</div>
+                <div id="eli-score" class="metric-value">0%</div>
+                <div id="eli-trend" class="metric-trend trend-up">
+                    <span>↑</span>
+                    <span>Loading...</span>
+                </div>
+                <!-- ELI Progress Bar -->
+                <div class="progress-container">
+                    <div class="progress-track">
+                        <div id="eli-progress-bar" class="progress-fill eli-fill"></div>
+                    </div>
+                    <div id="eli-progress-text" class="progress-text">0% of ₹4.25 Cr</div>
+                </div>
+                <div class="data-update" id="eli-update">Live</div>
+            </div>
+
+            <div class="metric-card nbl-card">
+                <div class="metric-title">NBL Progress</div>
+                <div id="nbl-score" class="metric-value">0%</div>
+                <div id="nbl-trend" class="metric-trend trend-down">
+                </div>
+                <!-- NBL Progress Bar -->
+                <div class="progress-container">
+                    <div class="progress-track">
+                        <div id="nbl-progress-bar" class="progress-fill nbl-fill"></div>
+                    </div>
+                    <div id="nbl-progress-text" class="progress-text">0% of ₹5 Cr</div>
+                </div>
+                <div class="data-update" id="nbl-update">Live</div>
+            </div>
+        </div>
+
+        <!-- ELI Top 3 -->
+        <div class="eli-top-section">
+            <div class="section-title">
+                <span>ELI Leaders</span>
+            </div>
+            <ul class="top-list" id="eli-list">
+                <li class="top-item loading">
+                    <span class="rank-number">-</span>
+                    <span class="achiever-name">Loading...</span>
+                    <span class="achievement-value">-</span>
+                </li>
+            </ul>
+            <div class="top-state-box eli-state-box">
+                <div class="top-state-label">ELI Top State</div>
+                <div id="eli-top-state-name" class="top-state-name">—</div>
+                <div id="eli-top-state-value" class="top-state-value">₹0</div>
+            </div>
+            <div class="update-time" id="eli-time">Updated: --:--:--</div>
+        </div>
+
+        <!-- Daily Graph -->
+        <div class="daily-graph-section">
+            <div class="graph-controls">
+                <div class="graph-title" id="graph-title">Daily Performance: ELI vs NBL</div>
+            </div>
+            <div class="daily-graph-container">
+                <div class="graph-canvas-container">
+                    <canvas id="dailyGraph"></canvas>
+                </div>
+                <div class="tooltip" id="graph-tooltip"></div>
+            </div>
+
+            <!-- Legend -->
+            <div class="graph-legend">
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #5d9cec;"></div>
+                    <span class="legend-text eli-legend"><b>ELI</b></span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #8b5cf6;"></div>
+                    <span class="legend-text nbl-legend"><b>NBL</b></span>
+                </div>
+            </div>
+
+            <!-- Unit indicator moved here (inside the graph section) -->
+            <div class="unit-indicator" id="unit-indicator"
+                style="font-size: 0.8rem; color: #6c7a89; margin-top: 15px; text-align: center;">
+                <!-- Will show: "Displaying in ₹ Lakhs" -->
+            </div>
+        </div>
+
+        <!-- NBL Top 3 -->
+        <div class="nbl-top-section">
+            <div class="section-title" style="font-size: 1rem;">NBL Leaders</div>
+            <ul class="top-list" id="nbl-list">
+                <li class="top-item loading">
+                    <span class="rank-number">-</span>
+                    <span class="achiever-name">Loading...</span>
+                    <span class="achievement-value">-</span>
+                </li>
+            </ul>
+            <div class="top-state-box nbl-state-box">
+                <div class="top-state-label">NBL Top State</div>
+                <div id="nbl-top-state-name" class="top-state-name">—</div>
+                <div id="nbl-top-state-value" class="top-state-value">₹0</div>
+            </div>
+            <div class="update-time" id="nbl-time">Updated: --:--:--</div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+
+</html>
