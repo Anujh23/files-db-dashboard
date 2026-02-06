@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: files-db-dashboard
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn wsgi:app --bind 0.0.0.0:$PORT --workers 2
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: FLASK_ENV
+        value: production
+      - key: NBL_USERNAME
+        sync: false
+      - key: NBL_PASSWORD
+        sync: false
+      - key: ELI_USERNAME
+        sync: false
+      - key: ELI_PASSWORD
+        sync: false
