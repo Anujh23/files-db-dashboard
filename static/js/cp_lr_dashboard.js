@@ -1,63 +1,29 @@
 // static/js/cp_lr_dashboard.js
-// Global variables
 let currentChart = null;
-let currentMonth = new Date().getMonth(); // Current month (0-indexed)
-let currentYear = new Date().getFullYear(); // Current year
-let timePeriod = 'month';
+let currentMonth = new Date().getMonth();
+let currentYear = new Date().getFullYear();
 const monthNames = ["January", "February", "March", "April", "May", "June",
     "July", "August", "September", "October", "November", "December"];
 
-// Indian number formatting with commas
 function formatNumberIndian(num) {
     if (!num) return '0';
-
-    // Indian numbering system: 1,00,00,000 format
     let numStr = num.toString();
     let lastThree = numStr.substring(numStr.length - 3);
     let otherNumbers = numStr.substring(0, numStr.length - 3);
-
     if (otherNumbers !== '') {
         lastThree = ',' + lastThree;
     }
-
-    let result = otherNumbers.replace(/\B(?=(\d{2})+(?!\d))/g, ",") + lastThree;
-
-    return result;
+    return otherNumbers.replace(/\B(?=(\d{2})+(?!\d))/g, ",") + lastThree;
 }
 
-// Format numbers with commas
-function formatNumber(num) {
-    return formatNumberIndian(num);
-}
-
-// Format achievement value for Indian market (Cr and Lakhs)
 function formatAchievement(value) {
     if (!value) return '₹0';
-
-    // Convert to Indian numbering system
-    if (value >= 10000000) { // 1 Crore = 10,000,000
-        return '₹' + (value / 10000000).toFixed(2) + ' Cr';
-    } else if (value >= 100000) { // 1 Lakh = 100,000
-        return '₹' + (value / 100000).toFixed(2) + ' L';
-    } else if (value >= 1000) {
-        return '₹' + (value / 1000).toFixed(0) + 'K';
-    }
-    return '₹' + formatNumber(value);
+    if (value >= 10000000) return '₹' + (value / 10000000).toFixed(2) + ' Cr';
+    if (value >= 100000) return '₹' + (value / 100000).toFixed(2) + ' L';
+    if (value >= 1000) return '₹' + (value / 1000).toFixed(0) + 'K';
+    return '₹' + formatNumberIndian(value);
 }
 
-// Format tooltip value appropriately
-function formatTooltipValue(value, unitInfo = null) {
-    if (value >= 10000000) {
-        return '₹' + (value / 10000000).toFixed(2) + ' Cr';
-    } else if (value >= 100000) {
-        return '₹' + (value / 100000).toFixed(2) + ' L';
-    } else if (value >= 1000) {
-        return '₹' + (value / 1000).toFixed(0) + 'K';
-    }
-    return '₹' + formatNumber(value);
-}
-
-// Update time display
 function updateTimeDisplay(elementId) {
     const now = new Date();
     const timeString = now.toLocaleTimeString('en-US', {
@@ -69,16 +35,10 @@ function updateTimeDisplay(elementId) {
     document.getElementById(elementId).textContent = `Updated: ${timeString}`;
 }
 
-// Update month display
 function updateMonthDisplay() {
-    const now = new Date();
-    currentMonth = now.getMonth();
-    currentYear = now.getFullYear();
-    document.getElementById('current-month').textContent =
-        `${monthNames[currentMonth]} ${currentYear}`;
+    document.getElementById('current-month').textContent = `${monthNames[currentMonth]} ${currentYear}`;
 }
 
-// Change month
 function changeMonth(delta) {
     currentMonth += delta;
     if (currentMonth > 11) {
@@ -88,195 +48,117 @@ function changeMonth(delta) {
         currentMonth = 11;
         currentYear--;
     }
-    document.getElementById('current-month').textContent =
-        `${monthNames[currentMonth]} ${currentYear}`;
+    updateMonthDisplay();
     updateAllData();
 }
 
-// Fetch and update CP data
-async function updateCPData() {
+async function updateTop3(source, listId, timeId) {
+    const url = source === 'CP'
+        ? `/api/cp-top3?month=${currentMonth + 1}&year=${currentYear}`
+        : `/api/lr-top3?month=${currentMonth + 1}&year=${currentYear}`;
+
+    const list = document.getElementById(listId);
+    list.innerHTML = '';
+
     try {
-        const response = await fetch(`/api/cp-top3?month=${currentMonth + 1}&year=${currentYear}`);
-        const data = await response.json();
-
-        const cpList = document.getElementById('cp-list');
-        cpList.innerHTML = '';
-
-        // Update top 3 list
-        data.top3.forEach((item, index) => {
-            const li = document.createElement('li');
-            li.className = 'top-item';
-            li.innerHTML = `
-                <span class="rank-number">${index + 1}</span>
-                <span class="achiever-name">${item.CM_Name}</span>
-                <span class="achievement-value">${formatAchievement(item.Achievement)}</span>
-            `;
-            cpList.appendChild(li);
-        });
-
-        // Update time
-        updateTimeDisplay('cp-time');
-
-    } catch (error) {
-        console.error('Error fetching CP data:', error);
-        document.getElementById('cp-list').innerHTML =
-            '<li class="top-item">Error loading data</li>';
-    }
-}
-
-// Fetch and update CP top state
-async function updateCPTopState() {
-    try {
-        const res = await fetch(`/api/cp-top-state?month=${currentMonth + 1}&year=${currentYear}`);
+        const res = await fetch(url);
         const data = await res.json();
 
-        document.getElementById('cp-top-state-name').textContent =
-            data.state || '—';
+        const items = (data.top3 || []).slice(0, 3);
+        if (!items.length) {
+            list.innerHTML = '<li class="top-item">No data</li>';
+        } else {
+            items.forEach((item, idx) => {
+                const li = document.createElement('li');
+                li.className = 'top-item';
+                li.innerHTML = `
+                    <span class="rank-number">${idx + 1}</span>
+                    <span class="achiever-name">${item.CM_Name}</span>
+                    <span class="achievement-value">${formatAchievement(item.Achievement)}</span>
+                `;
+                list.appendChild(li);
+            });
+        }
 
-        document.getElementById('cp-top-state-value').textContent =
-            formatAchievement(data.total);
-
-    } catch (err) {
-        console.error('CP Top State error', err);
-        document.getElementById('cp-top-state-name').textContent = '—';
-        document.getElementById('cp-top-state-value').textContent = '₹0';
+        updateTimeDisplay(timeId);
+    } catch (e) {
+        list.innerHTML = '<li class="top-item">Error loading data</li>';
     }
 }
 
-// Fetch and update LR data
-async function updateLRData() {
+async function updateTopState(source) {
+    const url = source === 'CP'
+        ? `/api/cp-top-state?month=${currentMonth + 1}&year=${currentYear}`
+        : `/api/lr-top-state?month=${currentMonth + 1}&year=${currentYear}`;
+
     try {
-        const response = await fetch(`/api/lr-top3?month=${currentMonth + 1}&year=${currentYear}`);
-        const data = await response.json();
-
-        const lrList = document.getElementById('lr-list');
-        lrList.innerHTML = '';
-
-        // Update top 3 list
-        data.top3.forEach((item, index) => {
-            const li = document.createElement('li');
-            li.className = 'top-item';
-            li.innerHTML = `
-                <span class="rank-number">${index + 1}</span>
-                <span class="achiever-name">${item.CM_Name}</span>
-                <span class="achievement-value">${formatAchievement(item.Achievement)}</span>
-            `;
-            lrList.appendChild(li);
-        });
-
-        // Update time
-        updateTimeDisplay('lr-time');
-
-    } catch (error) {
-        console.error('Error fetching LR data:', error);
-        document.getElementById('lr-list').innerHTML =
-            '<li class="top-item">Error loading data</li>';
-    }
-}
-
-// Fetch and update LR top state
-async function updateLRTopState() {
-    try {
-        const res = await fetch(`/api/lr-top-state?month=${currentMonth + 1}&year=${currentYear}`);
+        const res = await fetch(url);
         const data = await res.json();
 
-        document.getElementById('lr-top-state-name').textContent =
-            data.state || '—';
-
-        document.getElementById('lr-top-state-value').textContent =
-            formatAchievement(data.total);
-
-    } catch (err) {
-        console.error('LR Top State error', err);
-        document.getElementById('lr-top-state-name').textContent = '—';
-        document.getElementById('lr-top-state-value').textContent = '₹0';
+        if (source === 'CP') {
+            document.getElementById('cp-top-state-name').textContent = data.state || '—';
+            document.getElementById('cp-top-state-value').textContent = formatAchievement(data.total);
+        } else {
+            document.getElementById('lr-top-state-name').textContent = data.state || '—';
+            document.getElementById('lr-top-state-value').textContent = formatAchievement(data.total);
+        }
+    } catch (e) {
+        // ignore
     }
 }
 
-// Fetch and update dashboard stats
-async function updateDashboardStats() {
+async function updateStats() {
     try {
-        const response = await fetch(`/api/cp-lr-stats?month=${currentMonth + 1}&year=${currentYear}`);
-        const data = await response.json();
+        const res = await fetch(`/api/cp-lr-stats?month=${currentMonth + 1}&year=${currentYear}`);
+        const data = await res.json();
 
-        // Update CP score
-        document.getElementById('cp-score').textContent = `${data.cp_score}%`;
-        const cpTrend = document.getElementById('cp-trend');
-        cpTrend.className = 'metric-trend trend-up';
-        cpTrend.innerHTML = `<span>↑</span><span>Live</span>`;
-        document.getElementById('cp-update').textContent = `Live`;
+        document.getElementById('cp-score').textContent = `${data.cp_score || 0}%`;
+        document.getElementById('lr-score').textContent = `${data.lr_score || 0}%`;
 
-        // CP progress bar
-        document.getElementById('cp-progress-bar').style.width = `${data.cp_progress_pct}%`;
-        document.getElementById('cp-progress-text').textContent =
-            `${data.cp_progress_pct}% of ₹5 Cr (${formatAchievement(data.cp_total)})`;
+        document.getElementById('cp-progress-bar').style.width = `${data.cp_progress_pct || 0}%`;
+        document.getElementById('lr-progress-bar').style.width = `${data.lr_progress_pct || 0}%`;
 
-        // Update LR score
-        document.getElementById('lr-score').textContent = `${data.lr_score}%`;
-        const lrTrend = document.getElementById('lr-trend');
-        lrTrend.className = 'metric-trend trend-up';
-        lrTrend.innerHTML = `<span>↑</span><span>Live</span>`;
-        document.getElementById('lr-update').textContent = `Live`;
+        document.getElementById('cp-progress-text').textContent = `${data.cp_progress_pct || 0}% of ${formatAchievement(data.cp_target)} (${formatAchievement(data.cp_total)})`;
+        document.getElementById('lr-progress-text').textContent = `${data.lr_progress_pct || 0}% of ${formatAchievement(data.lr_target)} (${formatAchievement(data.lr_total)})`;
 
-        // LR progress bar
-        document.getElementById('lr-progress-bar').style.width = `${data.lr_progress_pct}%`;
-        document.getElementById('lr-progress-text').textContent =
-            `${data.lr_progress_pct}% of ₹5 Cr (${formatAchievement(data.lr_total)})`;
-
-        // Combined progress
-        document.getElementById('focus-bar').style.width = `${data.combined_progress_pct}%`;
-        document.getElementById('focus-text').textContent =
-            `${data.combined_progress_pct}% of ₹10 Cr (${formatAchievement(data.combined_total)})`;
-
-    } catch (error) {
-        console.error('Error fetching dashboard stats:', error);
+        document.getElementById('focus-bar').style.width = `${data.combined_progress_pct || 0}%`;
+        document.getElementById('focus-text').textContent = `${data.combined_progress_pct || 0}% of ${formatAchievement(data.combined_target)} (${formatAchievement(data.combined_total)})`;
+    } catch (e) {
     }
 }
 
-// Update graph with daily data
 async function updateGraph() {
     try {
-        const response = await fetch(`/api/cp-lr-daily?month=${currentMonth + 1}&year=${currentYear}&period=${timePeriod}`);
-        const data = await response.json();
+        const res = await fetch(`/api/cp-lr-daily?month=${currentMonth + 1}&year=${currentYear}`);
+        const data = await res.json();
 
-        // Prepare raw data
-        const cpRawData = data.cp_daily_totals;
-        const lrRawData = data.lr_daily_totals;
+        const cpRaw = data.cp_daily_totals || [];
+        const lrRaw = data.lr_daily_totals || [];
+        const days = data.days || cpRaw.map((_, i) => i + 1);
 
-        // Plot values in Lakhs (L)
-        const graphDivisor = 100000; // 1 Lakh
-        const cpData = cpRawData.map(total => total / graphDivisor);
-        const lrData = lrRawData.map(total => total / graphDivisor);
+        const divisor = 100000;
+        const cp = cpRaw.map(v => v / divisor);
+        const lr = lrRaw.map(v => v / divisor);
 
-        // Clean up any existing custom elements
-        const existingXAxis = document.querySelector('.custom-x-axis');
-        if (existingXAxis) {
-            existingXAxis.remove();
-        }
+        const maxValue = Math.max(...cp, ...lr) * 1.1;
 
-        // Destroy existing chart
-        if (currentChart) {
-            currentChart.destroy();
-        }
+        if (currentChart) currentChart.destroy();
 
-        // Create new chart
         const ctx = document.getElementById('dailyGraph').getContext('2d');
-        const maxValue = Math.max(...cpData, ...lrData) * 1.1;
-
         currentChart = new Chart(ctx, {
             type: 'line',
             data: {
-                labels: data.days || cpData.map((_, i) => `Day ${i + 1}`),
+                labels: days,
                 datasets: [
                     {
                         label: 'CP',
-                        data: cpData,
-                        borderColor: '#ff6b6b',
-                        backgroundColor: 'rgba(255, 107, 107, 0.1)',
+                        data: cp,
+                        borderColor: '#5d9cec',
+                        backgroundColor: 'rgba(93, 156, 236, 0.1)',
                         borderWidth: 2,
                         fill: true,
                         tension: 0.4,
-                        pointBackgroundColor: '#ff6b6b',
+                        pointBackgroundColor: '#5d9cec',
                         pointBorderColor: '#ffffff',
                         pointBorderWidth: 2,
                         pointRadius: 4,
@@ -284,13 +166,13 @@ async function updateGraph() {
                     },
                     {
                         label: 'LR',
-                        data: lrData,
-                        borderColor: '#4ecdc4',
-                        backgroundColor: 'rgba(78, 205, 196, 0.1)',
+                        data: lr,
+                        borderColor: '#8b5cf6',
+                        backgroundColor: 'rgba(139, 92, 246, 0.1)',
                         borderWidth: 2,
                         fill: true,
                         tension: 0.4,
-                        pointBackgroundColor: '#4ecdc4',
+                        pointBackgroundColor: '#8b5cf6',
                         pointBorderColor: '#ffffff',
                         pointBorderWidth: 2,
                         pointRadius: 4,
@@ -306,17 +188,12 @@ async function updateGraph() {
                     mode: 'index'
                 },
                 plugins: {
-                    legend: {
-                        display: false
-                    },
+                    legend: { display: false },
                     tooltip: {
                         callbacks: {
-                            label: function (context) {
-                                const dataset = context.dataset.label;
-                                const chartValue = context.raw;
-                                const rawValue = chartValue * graphDivisor;
-                                const formatted = formatTooltipValue(rawValue);
-                                return `${dataset}: ${formatted}`;
+                            label: (ctx) => {
+                                const raw = (ctx.raw || 0) * divisor;
+                                return `${ctx.dataset.label}: ${formatAchievement(raw)}`;
                             }
                         }
                     }
@@ -329,13 +206,7 @@ async function updateGraph() {
                         },
                         ticks: {
                             color: '#6c7a89',
-                            callback: function (value) {
-                                if (value >= 100) {
-                                    const cr = value / 100;
-                                    return `${cr.toFixed(2)} Cr`;
-                                }
-                                return `${value} L`;
-                            }
+                            callback: (v) => v >= 100 ? `${(v / 100).toFixed(2)} Cr` : `${v} L`
                         },
                         title: {
                             display: false
@@ -362,29 +233,24 @@ async function updateGraph() {
                 }
             }
         });
-
-    } catch (error) {
-        console.error('Error fetching graph data:', error);
+    } catch (e) {
+        // ignore
     }
 }
 
-// Update all data
 async function updateAllData() {
     await Promise.all([
-        updateCPData(),
-        updateLRData(),
-        updateDashboardStats(),
+        updateTop3('CP', 'cp-list', 'cp-time'),
+        updateTop3('LR', 'lr-list', 'lr-time'),
+        updateTopState('CP'),
+        updateTopState('LR'),
+        updateStats(),
         updateGraph(),
-        updateCPTopState(),
-        updateLRTopState()
     ]);
 }
 
-// Initial load
 document.addEventListener('DOMContentLoaded', () => {
     updateMonthDisplay();
     updateAllData();
-
-    // Auto-refresh every 30 seconds
     setInterval(updateAllData, 30000);
 });

@@ -1,7 +1,6 @@
 import calendar
 import logging
 import os
-import threading
 import time
 from datetime import date
 
@@ -16,6 +15,8 @@ except Exception:
     # .env loading is optional; production typically uses real environment variables
     pass
 
+from dashboard.analytics.aggregations import daily_totals, month_name, top3, top_state
+from dashboard.web.cache import RefreshCache
 from scrapers import fetch_combined_disbursed_df
 
 
@@ -38,76 +39,16 @@ def _log_request():
 
 
 _CACHE_TTL_SECONDS = 60
-_cache: dict[tuple[int, int], dict] = {}
-_locks: dict[tuple[int, int], threading.Lock] = {}
-
-
-def _refresh_cache(key: tuple[int, int], year: int, month: int) -> None:
-    started = time.time()
-    try:
-        logger.info("Background refresh start for %s", key)
-        try:
-            rows = fetch_combined_disbursed_df(year, month)
-            err = None
-        except Exception as e:
-            err = f"{type(e).__name__}: {e}"
-            rows = []
-            logger.exception("Background refresh failed for %s", key)
-
-        elapsed = round(time.time() - started, 2)
-        logger.info("Background refresh finished for %s in %ss. Rows=%s Error=%s", key, elapsed, len(rows), err)
-
-        _cache[key] = {"ts": time.time(), "df": rows, "error": err, "refreshing": False}
-    finally:
-        # Ensure we always clear the refreshing flag even if something goes wrong
-        hit = _cache.get(key)
-        if hit:
-            hit["refreshing"] = False
-
-
-def _kickoff_refresh(year: int, month: int) -> None:
-    key = (year, month)
-    lock = _get_lock(key)
-
-    # Only one refresh thread per key
-    with lock:
-        hit = _cache.get(key)
-        if hit and hit.get("refreshing"):
-            return
-        if hit is None:
-            _cache[key] = {"ts": 0.0, "df": [], "error": "warming_up", "refreshing": True}
-        else:
-            hit["refreshing"] = True
-
-    t = threading.Thread(target=_refresh_cache, args=(key, year, month), daemon=True)
-    t.start()
-
-
-def _get_lock(key: tuple[int, int]) -> threading.Lock:
-    lock = _locks.get(key)
-    if lock is None:
-        lock = threading.Lock()
-        _locks[key] = lock
-    return lock
+_refresh_cache = RefreshCache(ttl_seconds=_CACHE_TTL_SECONDS)
 
 
 def _get_cached_df(year: int, month: int):
     key = (year, month)
-    now = time.time()
-    hit = _cache.get(key)
-    if hit and (now - hit["ts"]) < _CACHE_TTL_SECONDS:
-        if hit.get("error"):
-            logger.warning("Cache hit with previous error for %s: %s", key, hit.get("error"))
-        return hit["df"], hit.get("error")
 
-    # Cache is missing or stale: return immediately and refresh in background.
-    if hit:
-        if not hit.get("refreshing"):
-            _kickoff_refresh(year, month)
-        return hit.get("df", []), hit.get("error") or "stale"
+    def _fetch():
+        return fetch_combined_disbursed_df(year, month)
 
-    _kickoff_refresh(year, month)
-    return [], "warming_up"
+    return _refresh_cache.get_cached(key, _fetch)
 
 
 @app.errorhandler(Exception)
@@ -125,67 +66,19 @@ def _handle_unexpected_error(e):
 
 
 def _month_name(year: int, month: int) -> str:
-    return f"{calendar.month_name[month]} {year}"
+    return month_name(year, month)
 
 
 def _top3(df, source: str):
-    rows = [r for r in df if r.get("source") == source]
-    if not rows:
-        return []
-
-    totals: dict[str, float] = {}
-    for r in rows:
-        cm = str(r.get("credit_by") or "").strip()
-        amt = r.get("loan_amount")
-        if amt is None:
-            continue
-        totals[cm] = totals.get(cm, 0.0) + float(amt)
-
-    top = sorted(totals.items(), key=lambda x: x[1], reverse=True)[:3]
-    return [{"CM_Name": k, "Achievement": float(v)} for k, v in top]
+    return top3(df, source)
 
 
 def _top_state(df, source: str):
-    rows = [r for r in df if r.get("source") == source]
-    if not rows:
-        return {"state": None, "total": 0}
-
-    totals: dict[str, float] = {}
-    for r in rows:
-        st = str(r.get("state") or "").strip()
-        amt = r.get("loan_amount")
-        if amt is None:
-            continue
-        totals[st] = totals.get(st, 0.0) + float(amt)
-
-    if not totals:
-        return {"state": None, "total": 0}
-
-    state, total = max(totals.items(), key=lambda x: x[1])
-    return {"state": state, "total": float(total)}
+    return top_state(df, source)
 
 
 def _daily_totals(df, source: str, year: int, month: int):
-    days_in_month = calendar.monthrange(year, month)[1]
-    days = list(range(1, days_in_month + 1))
-
-    rows = [r for r in df if r.get("source") == source]
-    if not rows:
-        return days, [0] * len(days)
-
-    totals_by_day: dict[int, float] = {}
-    for r in rows:
-        d = r.get("disbursal_date")
-        amt = r.get("loan_amount")
-        if d is None or amt is None:
-            continue
-        day = int(getattr(d, "day", 0) or 0)
-        if day <= 0:
-            continue
-        totals_by_day[day] = totals_by_day.get(day, 0.0) + float(amt)
-
-    totals = [float(totals_by_day.get(day, 0.0)) for day in days]
-    return days, totals
+    return daily_totals(df, source, year, month)
 
 
 @app.get("/")
@@ -198,14 +91,25 @@ def api_health():
     return jsonify({"ok": True})
 
 
-@app.post("/api/refresh")
+@app.route("/api/clear-cache", methods=["GET", "POST"])
+def api_clear_cache():
+    """Clear all cached data to force fresh fetch."""
+    _refresh_cache.clear()
+    logger.info("Cache cleared")
+    return jsonify({"cleared": True, "message": "Cache cleared successfully"})
+
+
+@app.route("/api/refresh", methods=["GET", "POST"])
 def api_refresh():
     month = int(request.args.get("month", date.today().month))
     year = int(request.args.get("year", date.today().year))
-    _kickoff_refresh(year, month)
-
     key = (year, month)
-    hit = _cache.get(key) or {}
+
+    def _fetch():
+        return fetch_combined_disbursed_df(year, month)
+
+    _refresh_cache.kickoff_refresh(key, _fetch)
+    hit = _refresh_cache.get_entry(key) or {}
     return jsonify(
         {
             "month": month,
@@ -243,8 +147,6 @@ def api_debug():
             "sample": sample,
         }
     )
-
-
 @app.get("/api/eli-top3")
 def api_eli_top3():
     month = int(request.args.get("month", date.today().month))
@@ -281,6 +183,13 @@ def api_nbl_top_state():
     return jsonify(out)
 
 
+# Load targets from environment variables with defaults
+ELI_TARGET = float(os.getenv("ELI_TARGET", "42500000"))  # ₹4.25 Cr default
+NBL_TARGET = float(os.getenv("NBL_TARGET", "50000000"))  # ₹5 Cr default
+CP_TARGET = float(os.getenv("CP_TARGET", "27500000"))  # ₹2.75 Cr default
+LR_TARGET = float(os.getenv("LR_TARGET", "22500000"))  # ₹2.25 Cr default
+
+
 @app.get("/api/dashboard-stats")
 def api_dashboard_stats():
     month = int(request.args.get("month", date.today().month))
@@ -291,9 +200,9 @@ def api_dashboard_stats():
     nbl_total = sum(float(r.get("loan_amount") or 0.0) for r in rows if r.get("source") == "NBL")
     combined_total = eli_total + nbl_total
 
-    eli_target = 42500000.0  # ₹4.25 Cr
-    nbl_target = 50000000.0  # ₹5 Cr
-    combined_target = 92500000.0  # ₹9.25 Cr
+    eli_target = ELI_TARGET
+    nbl_target = NBL_TARGET
+    combined_target = ELI_TARGET + NBL_TARGET
 
     eli_progress_pct = round(min(100.0, (eli_total / eli_target) * 100.0), 2) if eli_target else 0.0
     nbl_progress_pct = round(min(100.0, (nbl_total / nbl_target) * 100.0), 2) if nbl_target else 0.0
@@ -374,8 +283,7 @@ def api_lr_top_state():
     out = _top_state(rows, "LR")
     out["error"] = err
     return jsonify(out)
-
-
+    
 @app.get("/api/cp-lr-stats")
 def api_cp_lr_stats():
     month = int(request.args.get("month", date.today().month))
@@ -386,16 +294,15 @@ def api_cp_lr_stats():
     lr_total = sum(float(r.get("loan_amount") or 0.0) for r in rows if r.get("source") == "LR")
     combined_total = cp_total + lr_total
 
-    cp_target = 50000000.0  # ₹5 Cr
-    lr_target = 50000000.0  # ₹5 Cr
-    combined_target = 100000000.0  # ₹10 Cr
+    cp_target = CP_TARGET
+    lr_target = LR_TARGET
+    combined_target = CP_TARGET + LR_TARGET
 
     cp_progress_pct = round(min(100.0, (cp_total / cp_target) * 100.0), 2) if cp_target else 0.0
     lr_progress_pct = round(min(100.0, (lr_total / lr_target) * 100.0), 2) if lr_target else 0.0
-    combined_progress_pct = round(min(100.0, (combined_total / combined_target) * 100.0), 2) if combined_target else 0.0
-
-    cp_score = cp_progress_pct
-    lr_score = lr_progress_pct
+    combined_progress_pct = (
+        round(min(100.0, (combined_total / combined_target) * 100.0), 2) if combined_target else 0.0
+    )
 
     return jsonify(
         {
@@ -405,11 +312,14 @@ def api_cp_lr_stats():
             "cp_total": cp_total,
             "lr_total": lr_total,
             "combined_total": combined_total,
+            "cp_target": cp_target,
+            "lr_target": lr_target,
+            "combined_target": combined_target,
             "cp_progress_pct": cp_progress_pct,
             "lr_progress_pct": lr_progress_pct,
             "combined_progress_pct": combined_progress_pct,
-            "cp_score": cp_score,
-            "lr_score": lr_score,
+            "cp_score": cp_progress_pct,
+            "lr_score": lr_progress_pct,
         }
     )
 
