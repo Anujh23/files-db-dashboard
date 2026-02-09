@@ -608,13 +608,17 @@ def fetch_cp_disbursed_df(year: int, month: int) -> list[dict]:
                     _get_any(rec, "Loan Amount", "loan_amount", "Amount", "Disbursed Amount", "disbursed_amount")
                 ),
                 "branch": str(_get_any(rec, "Branch", "branch") or "").strip(),
-                "state": str(_get_any(rec, "State", "state") or "").strip(),
+                "state": str(_get_any(rec, "State", "state", "Location", "location", "Region", "region", "City", "city", "Area", "area", "Branch", "branch") or "").strip(),
                 "loan_no": str(_get_any(rec, "Loan No", "Loan No.", "loan_no", "Loan Number") or "").strip(),
                 "lead_id": str(_get_any(rec, "LeadID", "Lead Id", "lead_id", "Lead ID") or "").strip(),
             }
         )
 
     logger.info("CP: normalized rows=%s (parse_fail=%s, date_mismatch=%s)", len(normalized), parse_fail, date_mismatch)
+    # Debug: show sample state values
+    if normalized:
+        for i, r in enumerate(normalized[:3]):
+            logger.info("CP: row %s state=%r", i, r.get("state"))
     return normalized
 
 
@@ -693,7 +697,7 @@ def fetch_lr_disbursed_df(year: int, month: int) -> list[dict]:
                     _get_any(rec, "Loan Amount", "loan_amount", "Amount", "Disbursed Amount", "disbursed_amount")
                 ),
                 "branch": str(_get_any(rec, "Branch", "branch") or "").strip(),
-                "state": str(_get_any(rec, "State", "state") or "").strip(),
+                "state": str(_get_any(rec, "State", "state", "Branch", "branch") or "").strip(),
                 "loan_no": str(_get_any(rec, "Loan No", "Loan No.", "loan_no", "Loan Number") or "").strip(),
                 "lead_id": str(_get_any(rec, "LeadID", "Lead Id", "lead_id", "Lead ID") or "").strip(),
             }
