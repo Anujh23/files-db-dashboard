@@ -2,19 +2,16 @@ import calendar
 import logging
 import os
 from datetime import date, datetime
-import warnings
+
 import requests
-import urllib3
 from bs4 import BeautifulSoup
 
 try:
     from dotenv import load_dotenv
-
     load_dotenv()
 except Exception:
     pass
 
-warnings.filterwarnings("ignore", category=urllib3.exceptions.InsecureRequestWarning)
 
 logger = logging.getLogger("scrapers")
 
@@ -32,22 +29,88 @@ NBL_USERNAME = os.getenv("NBL_USERNAME", "")
 NBL_PASSWORD = os.getenv("NBL_PASSWORD", "")
 
 CP_LOGIN_URL = "https://app.creditpey.in/"
-CP_DATA_URL = "https://app.creditpey.in/disbursal/disbursed"
+CP_DATA_URL = "https://app.creditpey.in/reporting/list/disbursed"
 
 CP_USERNAME = os.getenv("CP_USERNAME", "")
 CP_PASSWORD = os.getenv("CP_PASSWORD", "")
 
 LR_LOGIN_URL = "https://app.lendingrupee.in/"
-LR_DATA_URL = "https://app.lendingrupee.in/disbursal/disbursed"
+LR_DATA_URL = "https://app.lendingrupee.in/reporting/list/disbursed"
 
 LR_USERNAME = os.getenv("LR_USERNAME", "")
 LR_PASSWORD = os.getenv("LR_PASSWORD", "")
+
+
+def _nbl_login(session: requests.Session) -> requests.Session:
+    """Login to NBL admin and return the session."""
+    if not NBL_USERNAME or not NBL_PASSWORD:
+        raise RuntimeError("Missing NBL credentials. Set NBL_USERNAME and NBL_PASSWORD environment variables.")
+
+    # First, get the login page to obtain CSRF token and session cookies
+    logger.info("NBL: fetching login page %s", NBL_ADMIN_URL)
+    login_page = session.get(NBL_ADMIN_URL, timeout=60)
+    login_page.raise_for_status()
+    
+    soup = BeautifulSoup(login_page.text, "html.parser")
+    
+    # Find the login form
+    form = soup.find("form", {"action": "/admin/login/doLogin"})
+    if not form:
+        raise RuntimeError("NBL login form not found")
+
+    # Get the CSRF token
+    csrf_token = form.find("input", {"name": "csrf_token"})
+    if not csrf_token or not csrf_token.get("value"):
+        raise RuntimeError("CSRF token not found in login form")
+
+    # Prepare login data
+    login_data = {
+        "csrf_token": csrf_token["value"],
+        "username": NBL_USERNAME,
+        "password": NBL_PASSWORD,
+        "remember": "on"  
+    }
+
+    headers = {
+        "Referer": NBL_ADMIN_URL,
+        "Origin": "https://app.nextbigloan.co.in",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
+    }
+
+    # Submit login form
+    login_url = "https://app.nextbigloan.co.in/admin/login/doLogin"
+    logger.info("NBL: POST login %s", login_url)
+    login_resp = session.post(
+        login_url,
+        data=login_data,
+        headers=headers,
+        allow_redirects=True,
+        timeout=60
+    )
+    login_resp.raise_for_status()
+
+    # Check if login was successful
+    if "login=incorrect" in login_resp.url:
+        error_msg = "Login failed - invalid username or password"
+        logger.error("NBL: %s", error_msg)
+        raise RuntimeError(error_msg)
+
+    logger.info("NBL: login successful")
+    return session
 
 
 def _month_date_range(year: int, month: int) -> tuple[date, date]:
     last_day = calendar.monthrange(year, month)[1]
     start_d = date(year, month, 1)
     end_d = date(year, month, last_day)
+
+    today = date.today()
+    if year == today.year and month == today.month:
+        # For current month, fetch only up to today so we always get the latest range
+        end_d = today
+
     return start_d, end_d
 
 
@@ -72,11 +135,7 @@ def _parse_date_any(v) -> date | None:
     if not s:
         return None
     # handle strings like '2025-02-01', '01-02-2025', '01/02/2025', and with time
-    s = s.replace("\u00a0", " ")
-    
-    # Normalize am/pm to uppercase for parsing
-    s_normalized = s.replace(" am", " AM").replace(" pm", " PM")
-    
+    s = s.replace("\\u00a0", " ")
     candidates = [
         "%Y-%m-%d",
         "%d-%m-%Y",
@@ -87,18 +146,12 @@ def _parse_date_any(v) -> date | None:
         "%Y-%m-%d %H:%M",
         "%d-%m-%Y %H:%M",
         "%Y-%m-%dT%H:%M:%S",
-        "%d-%m-%Y %I:%M:%S %p",  # 12-hour format with seconds: 07-02-2026 05:24:07 PM
-        "%d-%m-%Y %I:%M %p",     # 12-hour format without seconds
     ]
     for fmt in candidates:
         try:
-            return datetime.strptime(s_normalized, fmt).date()
+            return datetime.strptime(s, fmt).date()
         except Exception:
             pass
-    
-    # Log parsing failure for debugging
-    logger.warning("_parse_date_any: failed to parse date %r", s)
-    
     # last resort: try split date portion
     for sep in [" ", "T"]:
         if sep in s:
@@ -107,13 +160,6 @@ def _parse_date_any(v) -> date | None:
                 d = _parse_date_any(head)
                 if d:
                     return d
-    return None
-
-def _get_any(d: dict, *keys):
-    """Get value from dict with any of the given keys."""
-    for k in keys:
-        if k in d and d[k] not in (None, ""):
-            return d[k]
     return None
 
 
@@ -225,23 +271,12 @@ def fetch_eli_disbursed_df(year: int, month: int) -> list[dict]:
 
     logger.info("ELI: parsed table rows=%s", len(records))
 
-    # Debug: show first row keys and sample date value
-    if records:
-        first_row = records[0]
-        logger.info("ELI: first row keys: %s", list(first_row.keys()))
-        disb_val = first_row.get("Disbursal Date")
-        logger.info("ELI: sample disbursal date value: %r", disb_val)
-
     normalized: list[dict] = []
-    parse_fail = 0
-    date_mismatch = 0
     for rec in records:
         disbursal_date = _parse_date_any(rec.get("Disbursal Date"))
         if not disbursal_date:
-            parse_fail += 1
             continue
         if disbursal_date.year != year or disbursal_date.month != month:
-            date_mismatch += 1
             continue
 
         normalized.append(
@@ -257,7 +292,7 @@ def fetch_eli_disbursed_df(year: int, month: int) -> list[dict]:
             }
         )
 
-    logger.info("ELI: normalized rows=%s (parse_fail=%s, date_mismatch=%s)", len(normalized), parse_fail, date_mismatch)
+    logger.info("ELI: normalized rows=%s", len(normalized))
     return normalized
 
 
@@ -388,17 +423,49 @@ def fetch_nbl_disbursed_df(year: int, month: int) -> list[dict]:
         payload.get("startDate"),
         payload.get("endDate"),
     )
-    r = session.post(NBL_DATA_URL, data=payload, headers=headers, timeout=180)
+    r = session.post(NBL_DATA_URL, data=payload, headers=headers, timeout=90)
     r.raise_for_status()
     logger.info("NBL: response %s bytes=%s", r.status_code, len(r.text))
 
-    raw_rows: list[dict] = _rows_from_any_html_table(r.text)
+    def _rows_from_html_table(html_text: str):
+        html_soup = BeautifulSoup(html_text, "html.parser")
+        table = html_soup.find("table")
+        if not table:
+            return []
+
+        headers_row = []
+        thead = table.find("thead")
+        if thead:
+            headers_row = [th.get_text(" ", strip=True) for th in thead.find_all("th")]
+
+        if headers_row:
+            logger.info("NBL: HTML header columns=%s", len(headers_row))
+
+        rows_local = []
+        tbody = table.find("tbody") or table
+        for tr in tbody.find_all("tr"):
+            cells = [td.get_text(" ", strip=True) for td in tr.find_all("td")]
+            if not cells:
+                continue
+            if headers_row and len(headers_row) == len(cells):
+                rows_local.append(dict(zip(headers_row, cells)))
+            else:
+                rows_local.append({f"col_{i+1}": v for i, v in enumerate(cells)})
+        return rows_local
+
+    raw_rows: list[dict] = _rows_from_html_table(r.text)
 
     if not raw_rows:
         logger.warning("NBL: fetched 0 rows")
         return []
 
     logger.info("NBL: raw rows=%s", len(raw_rows))
+
+    def _get_any(d: dict, *keys):
+        for k in keys:
+            if k in d and d[k] not in (None, ""):
+                return d[k]
+        return None
 
     normalized: list[dict] = []
     for rec in raw_rows:
@@ -508,7 +575,7 @@ def _crm_login(session: requests.Session, *, label: str, login_url: str, usernam
         raise RuntimeError(f"{label} login failed (final url={r2.url})")
 
 
-def _rows_from_any_html_table(html_text: str):
+def _rows_from_any_html_table(html_text: str) -> list[dict]:
     html_soup = BeautifulSoup(html_text, "html.parser")
     table = html_soup.find("table")
     if not table:
@@ -533,96 +600,35 @@ def _rows_from_any_html_table(html_text: str):
     return rows_local
 
 
-def fetch_cp_disbursed_df(year: int, month: int) -> list[dict]:
-    if not CP_USERNAME or not CP_PASSWORD:
-        raise RuntimeError("Missing CP credentials. Set CP_USERNAME and CP_PASSWORD environment variables.")
-
-    logger.info("CP: fetching disbursed data for %04d-%02d", year, month)
-
-    session = requests.Session()
-    _crm_login(session, label="CP", login_url=CP_LOGIN_URL, username=CP_USERNAME, password=CP_PASSWORD)
-
-    # Fetch all pages with sortByThisMonth
-    all_rows: list[dict] = []
-    page = 1
-    max_pages = 50
-    
-    while page <= max_pages:
-        params = {
-            "filter": "sortByThisMonth",
-            "page": page,
-        }
-        headers = {"Referer": CP_DATA_URL}
-        
-        logger.info("CP: GET page %s %s", page, CP_DATA_URL)
-        r = session.get(CP_DATA_URL, params=params, headers=headers, timeout=90, verify=False)
-        r.raise_for_status()
-        
-        rows = _rows_from_any_html_table(r.text)
-        if not rows:
-            logger.info("CP: no more rows at page %s", page)
-            break
-        
-        logger.info("CP: page %s returned %s rows", page, len(rows))
-        all_rows.extend(rows)
-        
-        # Check if we got a full page (usually 10 rows) - if less, we're done
-        if len(rows) < 10:
-            logger.info("CP: partial page (%s rows) - pagination complete", len(rows))
-            break
-        
-        page += 1
-    
-    logger.info("CP: total rows fetched across %s pages: %s", page, len(all_rows))
-
-    # Deduplicate by (lead_id, loan_no)
-    seen = set()
-    unique_rows = []
-    for rec in all_rows:
-        lead_id = str(_get_any(rec, "LeadID", "Lead Id", "lead_id", "Lead ID") or "").strip()
-        loan_no = str(_get_any(rec, "Loan No", "Loan No.", "loan_no", "Loan Number") or "").strip()
-        key = (lead_id, loan_no)
-        if key not in seen:
-            seen.add(key)
-            unique_rows.append(rec)
-    
-    if len(unique_rows) < len(all_rows):
-        logger.info("CP: deduplicated %s rows to %s unique", len(all_rows), len(unique_rows))
-    
-    all_rows = unique_rows
-
-    if not all_rows:
-        logger.warning("CP: fetched 0 rows")
-        return []
-
-    # Debug: show first row keys and sample date value
-    if all_rows:
-        first_row = all_rows[0]
-        logger.info("CP: first row keys: %s", list(first_row.keys()))
-        disb_val = _get_any(first_row, "Disbursal Date", "Disbursed Date", "disbursal_date", "disbursed_date", "Date")
-        logger.info("CP: sample disbursal date value: %r", disb_val)
+def _normalize_disbursed_rows(rows: list[dict], *, source: str, year: int, month: int) -> list[dict]:
+    def _get_any(d: dict, *keys):
+        for k in keys:
+            if k in d and d[k] not in (None, ""):
+                return d[k]
+        return None
 
     normalized: list[dict] = []
-    parse_fail = 0
-    date_mismatch = 0
-    for rec in all_rows:
-        disb = _get_any(rec, "Disbursal Date", "Disbursed Date", "disbursal_date", "disbursed_date", "Date")
+    for rec in rows:
+        disb = _get_any(
+            rec,
+            "Disbursal Date",
+            "Disbursed Date",
+            "disbursal_date",
+            "disbursed_date",
+            "Date",
+        )
         disb_date = _parse_date_any(disb)
         if not disb_date:
-            parse_fail += 1
             continue
         if disb_date.year != year or disb_date.month != month:
-            date_mismatch += 1
             continue
 
         normalized.append(
             {
-                "source": "CP",
+                "source": source,
                 "disbursal_date": disb_date,
-                "credit_by": str(_get_any(rec, "Credit By", "credit_by", "CM", "Sales", "Sanction By") or "").strip(),
-                "loan_amount": _clean_amount(
-                    _get_any(rec, "Loan Amount", "loan_amount", "Amount", "Disbursed Amount", "disbursed_amount")
-                ),
+                "credit_by": str(_get_any(rec, "Credit By", "credit_by", "CM", "Sales") or "").strip(),
+                "loan_amount": _clean_amount(_get_any(rec, "Loan Amount", "loan_amount", "Amount", "Disbursed Amount", "disbursed_amount")),
                 "branch": str(_get_any(rec, "Branch", "branch") or "").strip(),
                 "state": str(_get_any(rec, "State", "state") or "").strip(),
                 "loan_no": str(_get_any(rec, "Loan No", "Loan No.", "loan_no", "Loan Number") or "").strip(),
@@ -630,109 +636,57 @@ def fetch_cp_disbursed_df(year: int, month: int) -> list[dict]:
             }
         )
 
-    logger.info("CP: normalized rows=%s (parse_fail=%s, date_mismatch=%s)", len(normalized), parse_fail, date_mismatch)
     return normalized
+
+
+def fetch_cp_disbursed_df(year: int, month: int) -> list[dict]:
+    if not CP_USERNAME or not CP_PASSWORD:
+        raise RuntimeError("Missing CP credentials. Set CP_USERNAME and CP_PASSWORD environment variables.")
+
+    start_d, end_d = _month_date_range(year, month)
+    logger.info("CP: fetching disbursed data for %04d-%02d (%s..%s)", year, month, start_d, end_d)
+
+    session = requests.Session()
+    _crm_login(session, label="CP", login_url=CP_LOGIN_URL, username=CP_USERNAME, password=CP_PASSWORD)
+
+    logger.info("CP: GET %s", CP_DATA_URL)
+    r = session.get(CP_DATA_URL, timeout=90, allow_redirects=True, verify=False)
+    r.raise_for_status()
+    logger.info("CP: response %s bytes=%s final_url=%s", r.status_code, len(r.text), r.url)
+
+    rows = _rows_from_any_html_table(r.text)
+    if not rows:
+        logger.warning("CP: fetched 0 rows")
+        return []
+
+    out = _normalize_disbursed_rows(rows, source="CP", year=year, month=month)
+    logger.info("CP: normalized rows=%s", len(out))
+    return out
 
 
 def fetch_lr_disbursed_df(year: int, month: int) -> list[dict]:
     if not LR_USERNAME or not LR_PASSWORD:
         raise RuntimeError("Missing LR credentials. Set LR_USERNAME and LR_PASSWORD environment variables.")
 
-    logger.info("LR: fetching disbursed data for %04d-%02d", year, month)
+    start_d, end_d = _month_date_range(year, month)
+    logger.info("LR: fetching disbursed data for %04d-%02d (%s..%s)", year, month, start_d, end_d)
 
     session = requests.Session()
     _crm_login(session, label="LR", login_url=LR_LOGIN_URL, username=LR_USERNAME, password=LR_PASSWORD)
 
-    # Fetch all pages with sortByThisMonth
-    all_rows: list[dict] = []
-    page = 1
-    max_pages = 50
-    
-    while page <= max_pages:
-        params = {
-            "filter": "sortByThisMonth",
-            "page": page,
-        }
-        headers = {"Referer": LR_DATA_URL}
-        
-        logger.info("LR: GET page %s %s", page, LR_DATA_URL)
-        r = session.get(LR_DATA_URL, params=params, headers=headers, timeout=90, verify=False)
-        r.raise_for_status()
-        
-        rows = _rows_from_any_html_table(r.text)
-        if not rows:
-            logger.info("LR: no more rows at page %s", page)
-            break
-        
-        logger.info("LR: page %s returned %s rows", page, len(rows))
-        all_rows.extend(rows)
-        
-        # Check if we got a full page (usually 10 rows) - if less, we're done
-        if len(rows) < 10:
-            logger.info("LR: partial page (%s rows) - pagination complete", len(rows))
-            break
-        
-        page += 1
-    
-    logger.info("LR: total rows fetched across %s pages: %s", page, len(all_rows))
+    logger.info("LR: GET %s", LR_DATA_URL)
+    r = session.get(LR_DATA_URL, timeout=90, allow_redirects=True, verify=False)
+    r.raise_for_status()
+    logger.info("LR: response %s bytes=%s final_url=%s", r.status_code, len(r.text), r.url)
 
-    # Deduplicate by (lead_id, loan_no)
-    seen = set()
-    unique_rows = []
-    for rec in all_rows:
-        lead_id = str(_get_any(rec, "LeadID", "Lead Id", "lead_id", "Lead ID") or "").strip()
-        loan_no = str(_get_any(rec, "Loan No", "Loan No.", "loan_no", "Loan Number") or "").strip()
-        key = (lead_id, loan_no)
-        if key not in seen:
-            seen.add(key)
-            unique_rows.append(rec)
-    
-    if len(unique_rows) < len(all_rows):
-        logger.info("LR: deduplicated %s rows to %s unique", len(all_rows), len(unique_rows))
-    
-    all_rows = unique_rows
-
-    if not all_rows:
+    rows = _rows_from_any_html_table(r.text)
+    if not rows:
         logger.warning("LR: fetched 0 rows")
         return []
 
-    # Debug: show first row keys and sample date value
-    if all_rows:
-        first_row = all_rows[0]
-        logger.info("LR: first row keys: %s", list(first_row.keys()))
-        disb_val = _get_any(first_row, "Disbursal Date", "Disbursed Date", "disbursal_date", "disbursed_date", "Date")
-        logger.info("LR: sample disbursal date value: %r", disb_val)
-
-    normalized: list[dict] = []
-    parse_fail = 0
-    date_mismatch = 0
-    for rec in all_rows:
-        disb = _get_any(rec, "Disbursal Date", "Disbursed Date", "disbursal_date", "disbursed_date", "Date")
-        disb_date = _parse_date_any(disb)
-        if not disb_date:
-            parse_fail += 1
-            continue
-        if disb_date.year != year or disb_date.month != month:
-            date_mismatch += 1
-            continue
-
-        normalized.append(
-            {
-                "source": "LR",
-                "disbursal_date": disb_date,
-                "credit_by": str(_get_any(rec, "Credit By", "credit_by", "CM", "Sales", "Sanction By") or "").strip(),
-                "loan_amount": _clean_amount(
-                    _get_any(rec, "Loan Amount", "loan_amount", "Amount", "Disbursed Amount", "disbursed_amount")
-                ),
-                "branch": str(_get_any(rec, "Branch", "branch") or "").strip(),
-                "state": str(_get_any(rec, "State", "state") or "").strip(),
-                "loan_no": str(_get_any(rec, "Loan No", "Loan No.", "loan_no", "Loan Number") or "").strip(),
-                "lead_id": str(_get_any(rec, "LeadID", "Lead Id", "lead_id", "Lead ID") or "").strip(),
-            }
-        )
-
-    logger.info("LR: normalized rows=%s (parse_fail=%s, date_mismatch=%s)", len(normalized), parse_fail, date_mismatch)
-    return normalized
+    out = _normalize_disbursed_rows(rows, source="LR", year=year, month=month)
+    logger.info("LR: normalized rows=%s", len(out))
+    return out
 
 
 def fetch_combined_disbursed_df(year: int, month: int) -> list[dict]:
@@ -740,12 +694,12 @@ def fetch_combined_disbursed_df(year: int, month: int) -> list[dict]:
     nbl = fetch_nbl_disbursed_df(year, month)
     cp = fetch_cp_disbursed_df(year, month)
     lr = fetch_lr_disbursed_df(year, month)
-    
     logger.info("NBL: fetched %s rows", len(nbl))
+
     combined = list(eli) + list(nbl) + list(cp) + list(lr)
     combined = [r for r in combined if r.get("disbursal_date") and r.get("loan_amount") is not None]
     for r in combined:
         r["credit_by"] = str(r.get("credit_by") or "").strip()
-    
+
     logger.info("COMBINED: ELI=%s NBL=%s CP=%s LR=%s TOTAL=%s", len(eli), len(nbl), len(cp), len(lr), len(combined))
     return combined
