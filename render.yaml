@@ -10,11 +10,29 @@ services:
         value: 3.11.0
       - key: FLASK_ENV
         value: production
-      - key: NBL_USERNAME
-        sync: false
-      - key: NBL_PASSWORD
-        sync: false
+      # Credentials
       - key: ELI_USERNAME
         sync: false
       - key: ELI_PASSWORD
         sync: false
+      - key: NBL_USERNAME
+        sync: false
+      - key: NBL_PASSWORD
+        sync: false
+      - key: CP_USERNAME
+        sync: false
+      - key: CP_PASSWORD
+        sync: false
+      - key: LR_USERNAME
+        sync: false
+      - key: LR_PASSWORD
+        sync: false
+      # Targets (in INR, without commas)
+      - key: ELI_TARGET
+        value: "42500000"
+      - key: NBL_TARGET
+        value: "50000000"
+      - key: CP_TARGET
+        value: "27500000"
+      - key: LR_TARGET
+        value: "22500000"

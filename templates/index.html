@@ -15,6 +15,11 @@
         <!-- Header -->
         <div class="header">
             <div class="welcome-text">Daily Performance Dashboard</div>
+            <a href="/cp-lr"
+                style="text-decoration: none; display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: linear-gradient(135deg, #5d9cec, #8b5cf6); color: white; border-radius: 20px; font-size: 0.9rem; font-weight: 500; transition: transform 0.2s;"
+                onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
+                CP/LR View
+            </a>
             <div class="month-selector">
                 <button class="month-btn" onclick="changeMonth(-1)">← Prev</button>
                 <div class="current-month" id="current-month">January 2024</div>
@@ -110,11 +115,11 @@
             <div class="graph-legend">
                 <div class="legend-item">
                     <div class="legend-color" style="background: #5d9cec;"></div>
-                    <span class="legend-text eli-legend"><b>ELI</b></span>
+                    <span class="legend-text eli-legend"><b>CP</b></span>
                 </div>
                 <div class="legend-item">
                     <div class="legend-color" style="background: #8b5cf6;"></div>
-                    <span class="legend-text nbl-legend"><b>NBL</b></span>
+                    <span class="legend-text nbl-legend"><b>LR</b></span>
                 </div>
             </div>
 
