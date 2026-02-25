@@ -399,7 +399,7 @@ def fetch_nbl_disbursed_df(year: int, month: int) -> list[dict]:
         return []
 
     logger.info("NBL: raw rows=%s", len(raw_rows))
-
+    
     normalized: list[dict] = []
     for rec in raw_rows:
         disb = _get_any(rec, "disbursal_date", "Disbursal Date", "disbursed_date", "Disbursed Date")
@@ -416,7 +416,7 @@ def fetch_nbl_disbursed_df(year: int, month: int) -> list[dict]:
                 "credit_by": str(_get_any(rec, "credit_by", "Credit By") or "").strip(),
                 "loan_amount": _clean_amount(_get_any(rec, "loan_amount", "Loan Amount", "amount")),
                 "branch": str(_get_any(rec, "branch", "Branch") or "").strip(),
-                "state": str(_get_any(rec, "state", "State") or "").strip(),
+                "state": str(_get_any(rec, "state", "State", "Branch", "branch") or "").strip(),
                 "loan_no": str(_get_any(rec, "loan_no", "Loan No", "Loan No.") or "").strip(),
                 "lead_id": str(_get_any(rec, "lead_id", "LeadID", "Lead Id") or "").strip(),
             }
