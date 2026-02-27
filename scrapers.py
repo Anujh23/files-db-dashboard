@@ -32,13 +32,13 @@ NBL_USERNAME = os.getenv("NBL_USERNAME", "")
 NBL_PASSWORD = os.getenv("NBL_PASSWORD", "")
 
 CP_LOGIN_URL = "https://app.creditpey.in/"
-CP_DATA_URL = "https://app.creditpey.in/disbursal/disbursed"
+CP_DATA_URL = "https://app.creditpey.in/reporting/filter/disbursed"
 
 CP_USERNAME = os.getenv("CP_USERNAME", "")
 CP_PASSWORD = os.getenv("CP_PASSWORD", "")
 
 LR_LOGIN_URL = "https://app.lendingrupee.in/"
-LR_DATA_URL = "https://app.lendingrupee.in/disbursal/disbursed"
+LR_DATA_URL = "https://app.lendingrupee.in/reporting/filter/disbursed"
 
 LR_USERNAME = os.getenv("LR_USERNAME", "")
 LR_PASSWORD = os.getenv("LR_PASSWORD", "")
@@ -545,7 +545,7 @@ def fetch_cp_disbursed_df(year: int, month: int) -> list[dict]:
     # Fetch all pages with sortByThisMonth
     all_rows: list[dict] = []
     page = 1
-    max_pages = 50
+    max_pages = 1000
     
     while page <= max_pages:
         params = {
@@ -564,16 +564,37 @@ def fetch_cp_disbursed_df(year: int, month: int) -> list[dict]:
             break
         
         logger.info("CP: page %s returned %s rows", page, len(rows))
+        
+        # Check for duplicates - if all rows on this page are already in all_rows, we've looped
+        page_loan_nos = set(r.get("Loan No", r.get("Loan No.", r.get("loan_no", ""))) for r in rows)
+        existing_loan_nos = set(r.get("Loan No", r.get("Loan No.", r.get("loan_no", ""))) for r in all_rows)
+        if page_loan_nos and page_loan_nos.issubset(existing_loan_nos):
+            logger.info("CP: all rows on page %s are duplicates - stopping pagination", page)
+            break
+        
         all_rows.extend(rows)
         
-        # Check if we got a full page (usually 10 rows) - if less, we're done
+        # If we got fewer rows than expected, we might be done - but verify next page
         if len(rows) < 10:
-            logger.info("CP: partial page (%s rows) - pagination complete", len(rows))
-            break
+            logger.info("CP: partial page (%s rows) - checking if more pages exist", len(rows))
+            # Try one more page to confirm we're done
+            next_params = {"filter": "sortByThisMonth", "page": page + 1}
+            next_r = session.get(CP_DATA_URL, params=next_params, headers=headers, timeout=90, verify=False)
+            next_rows = _rows_from_any_html_table(next_r.text)
+            if not next_rows:
+                logger.info("CP: confirmed - no more data after page %s", page)
+                break
+            else:
+                logger.info("CP: more data found on page %s (%s rows), continuing", page + 1, len(next_rows))
         
         page += 1
     
     logger.info("CP: total rows fetched across %s pages: %s", page, len(all_rows))
+    
+    # Debug: Check for duplicate loan numbers across pages
+    loan_nos = [r.get("Loan No", r.get("Loan No.", r.get("loan_no", ""))) for r in all_rows]
+    unique_loan_nos = set(loan_nos)
+    logger.info("CP: unique loan numbers: %s, duplicates: %s", len(unique_loan_nos), len(loan_nos) - len(unique_loan_nos))
 
     if not all_rows:
         logger.warning("CP: fetched 0 rows")
@@ -589,14 +610,32 @@ def fetch_cp_disbursed_df(year: int, month: int) -> list[dict]:
     normalized: list[dict] = []
     parse_fail = 0
     date_mismatch = 0
+    total_amount_skipped = 0.0
+    
+    # Debug: Show some sample rows before filtering
+    if all_rows:
+        logger.info("CP: checking first 5 rows for dates...")
+        for i, rec in enumerate(all_rows[:5]):
+            disb = _get_any(rec, "Disbursal Date", "Disbursed Date", "disbursal_date", "disbursed_date", "Date")
+            loan_amt = _clean_amount(_get_any(rec, "Loan Amount", "loan_amount", "Amount"))
+            disb_amt = _clean_amount(_get_any(rec, "Disbursed Amount", "disbursed_amount"))
+            logger.info("CP: row %s raw date=%r loan_amount=%s disbursed_amount=%s", i, disb, loan_amt, disb_amt)
+    
     for rec in all_rows:
         disb = _get_any(rec, "Disbursal Date", "Disbursed Date", "disbursal_date", "disbursed_date", "Date")
+        loan_amt = _clean_amount(_get_any(rec, "Loan Amount", "loan_amount", "Amount", "Disbursed Amount", "disbursed_amount"))
         disb_date = _parse_date_any(disb)
         if not disb_date:
             parse_fail += 1
+            total_amount_skipped += float(loan_amt or 0)
+            if parse_fail <= 3:
+                logger.info("CP: parse_fail for date=%r amount=%s", disb, loan_amt)
             continue
         if disb_date.year != year or disb_date.month != month:
             date_mismatch += 1
+            total_amount_skipped += float(loan_amt or 0)
+            # Log ALL date mismatches to see what extra dates are being fetched
+            logger.info("CP: DATE_MISMATCH row=%s date=%s amt=%s", date_mismatch, disb_date, loan_amt)
             continue
 
         normalized.append(
@@ -604,9 +643,7 @@ def fetch_cp_disbursed_df(year: int, month: int) -> list[dict]:
                 "source": "CP",
                 "disbursal_date": disb_date,
                 "credit_by": str(_get_any(rec, "Credit By", "credit_by", "CM", "Sales", "Sanction By") or "").strip(),
-                "loan_amount": _clean_amount(
-                    _get_any(rec, "Loan Amount", "loan_amount", "Amount", "Disbursed Amount", "disbursed_amount")
-                ),
+                "loan_amount": loan_amt,
                 "branch": str(_get_any(rec, "Branch", "branch") or "").strip(),
                 "state": str(_get_any(rec, "State", "state", "Location", "location", "Region", "region", "City", "city", "Area", "area", "Branch", "branch") or "").strip(),
                 "loan_no": str(_get_any(rec, "Loan No", "Loan No.", "loan_no", "Loan Number") or "").strip(),
@@ -614,7 +651,9 @@ def fetch_cp_disbursed_df(year: int, month: int) -> list[dict]:
             }
         )
 
+    total_normalized = sum(float(r.get("loan_amount") or 0) for r in normalized)
     logger.info("CP: normalized rows=%s (parse_fail=%s, date_mismatch=%s)", len(normalized), parse_fail, date_mismatch)
+    logger.info("CP: total amount normalized=%s, skipped=%s", total_normalized, total_amount_skipped)
     # Debug: show sample state values
     if normalized:
         for i, r in enumerate(normalized[:3]):
@@ -634,7 +673,7 @@ def fetch_lr_disbursed_df(year: int, month: int) -> list[dict]:
     # Fetch all pages with sortByThisMonth
     all_rows: list[dict] = []
     page = 1
-    max_pages = 50
+    max_pages = 1000
     
     while page <= max_pages:
         params = {
@@ -653,16 +692,37 @@ def fetch_lr_disbursed_df(year: int, month: int) -> list[dict]:
             break
         
         logger.info("LR: page %s returned %s rows", page, len(rows))
+        
+        # Check for duplicates - if all rows on this page are already in all_rows, we've looped
+        page_loan_nos = set(r.get("Loan No", r.get("Loan No.", r.get("loan_no", ""))) for r in rows)
+        existing_loan_nos = set(r.get("Loan No", r.get("Loan No.", r.get("loan_no", ""))) for r in all_rows)
+        if page_loan_nos and page_loan_nos.issubset(existing_loan_nos):
+            logger.info("LR: all rows on page %s are duplicates - stopping pagination", page)
+            break
+        
         all_rows.extend(rows)
         
-        # Check if we got a full page (usually 10 rows) - if less, we're done
+        # If we got fewer rows than expected, we might be done - but verify next page
         if len(rows) < 10:
-            logger.info("LR: partial page (%s rows) - pagination complete", len(rows))
-            break
+            logger.info("LR: partial page (%s rows) - checking if more pages exist", len(rows))
+            # Try one more page to confirm we're done
+            next_params = {"filter": "sortByThisMonth", "page": page + 1}
+            next_r = session.get(LR_DATA_URL, params=next_params, headers=headers, timeout=90, verify=False)
+            next_rows = _rows_from_any_html_table(next_r.text)
+            if not next_rows:
+                logger.info("LR: confirmed - no more data after page %s", page)
+                break
+            else:
+                logger.info("LR: more data found on page %s (%s rows), continuing", page + 1, len(next_rows))
         
         page += 1
     
     logger.info("LR: total rows fetched across %s pages: %s", page, len(all_rows))
+    
+    # Debug: Check for duplicate loan numbers across pages
+    loan_nos = [r.get("Loan No", r.get("Loan No.", r.get("loan_no", ""))) for r in all_rows]
+    unique_loan_nos = set(loan_nos)
+    logger.info("LR: unique loan numbers: %s, duplicates: %s", len(unique_loan_nos), len(loan_nos) - len(unique_loan_nos))
 
     if not all_rows:
         logger.warning("LR: fetched 0 rows")
