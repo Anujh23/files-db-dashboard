@@ -22,24 +22,24 @@ def top3(rows: list[dict], source: str) -> list[dict]:
     return [{"CM_Name": k, "Achievement": float(v)} for k, v in top]
 
 
-def top_state(rows: list[dict], source: str) -> dict:
+def top_branch(rows: list[dict], source: str) -> dict:
     src_rows = [r for r in rows if r.get("source") == source]
     if not src_rows:
-        return {"state": None, "total": 0}
+        return {"branch": None, "total": 0}
 
     totals: dict[str, float] = {}
     for r in src_rows:
-        st = str(r.get("state") or "").strip()
+        br = str(r.get("branch") or "").strip()
         amt = r.get("loan_amount")
         if amt is None:
             continue
-        totals[st] = totals.get(st, 0.0) + float(amt)
+        totals[br] = totals.get(br, 0.0) + float(amt)
 
     if not totals:
-        return {"state": None, "total": 0}
+        return {"branch": None, "total": 0}
 
-    state, total = max(totals.items(), key=lambda x: x[1])
-    return {"state": state, "total": float(total)}
+    branch, total = max(totals.items(), key=lambda x: x[1])
+    return {"branch": branch, "total": float(total)}
 
 
 def daily_totals(rows: list[dict], source: str, year: int, month: int):

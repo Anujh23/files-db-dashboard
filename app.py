@@ -15,7 +15,7 @@ except Exception:
     # .env loading is optional; production typically uses real environment variables
     pass
 
-from dashboard.analytics.aggregations import daily_totals, month_name, top3, top_state
+from dashboard.analytics.aggregations import daily_totals, month_name, top3, top_branch
 from dashboard.web.cache import RefreshCache
 from scrapers import fetch_combined_disbursed_df
 
@@ -73,8 +73,8 @@ def _top3(df, source: str):
     return top3(df, source)
 
 
-def _top_state(df, source: str):
-    return top_state(df, source)
+def _top_branch(df, source: str):
+    return top_branch(df, source)
 
 
 def _daily_totals(df, source: str, year: int, month: int):
@@ -168,7 +168,7 @@ def api_eli_top_state():
     month = int(request.args.get("month", date.today().month))
     year = int(request.args.get("year", date.today().year))
     rows, err = _get_cached_df(year, month)
-    out = _top_state(rows, "ELI")
+    out = _top_branch(rows, "ELI")
     out["error"] = err
     return jsonify(out)
 
@@ -178,7 +178,7 @@ def api_nbl_top_state():
     month = int(request.args.get("month", date.today().month))
     year = int(request.args.get("year", date.today().year))
     rows, err = _get_cached_df(year, month)
-    out = _top_state(rows, "NBL")
+    out = _top_branch(rows, "NBL")
     out["error"] = err
     return jsonify(out)
 
@@ -270,7 +270,7 @@ def api_cp_top_state():
     month = int(request.args.get("month", date.today().month))
     year = int(request.args.get("year", date.today().year))
     rows, err = _get_cached_df(year, month)
-    out = _top_state(rows, "CP")
+    out = _top_branch(rows, "CP")
     out["error"] = err
     return jsonify(out)
 
@@ -280,7 +280,7 @@ def api_lr_top_state():
     month = int(request.args.get("month", date.today().month))
     year = int(request.args.get("year", date.today().year))
     rows, err = _get_cached_df(year, month)
-    out = _top_state(rows, "LR")
+    out = _top_branch(rows, "LR")
     out["error"] = err
     return jsonify(out)
     

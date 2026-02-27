@@ -156,20 +156,20 @@ async function updateELIData() {
     }
 }
 
-// Fetch and update ELI top state
+// Fetch and update ELI top state (now uses branch)
 async function updateELITopState() {
     try {
         const res = await fetch(`/api/eli-top-state?month=${currentMonth + 1}&year=${currentYear}`);
         const data = await res.json();
 
         document.getElementById('eli-top-state-name').textContent =
-            data.state || '—';
+            data.branch || '—';
 
         document.getElementById('eli-top-state-value').textContent =
             formatAchievement(data.total);
 
     } catch (err) {
-        console.error('ELI Top State error', err);
+        console.error('ELI Top Branch error', err);
         document.getElementById('eli-top-state-name').textContent = '—';
         document.getElementById('eli-top-state-value').textContent = '₹0';
     }
@@ -206,20 +206,20 @@ async function updateNBLData() {
     }
 }
 
-// Fetch and update NBL top state
+// Fetch and update NBL top state (now uses branch)
 async function updateNBLTopState() {
     try {
         const res = await fetch(`/api/nbl-top-state?month=${currentMonth + 1}&year=${currentYear}`);
         const data = await res.json();
 
         document.getElementById('nbl-top-state-name').textContent =
-            data.state || '—';
+            data.branch || '—';
 
         document.getElementById('nbl-top-state-value').textContent =
             formatAchievement(data.total);
 
     } catch (err) {
-        console.error('NBL Top State error', err);
+        console.error('NBL Top Branch error', err);
         document.getElementById('nbl-top-state-name').textContent = '—';
         document.getElementById('nbl-top-state-value').textContent = '₹0';
     }

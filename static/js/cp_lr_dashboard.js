@@ -96,10 +96,10 @@ async function updateTopState(source) {
         const data = await res.json();
 
         if (source === 'CP') {
-            document.getElementById('cp-top-state-name').textContent = data.state || '—';
+            document.getElementById('cp-top-state-name').textContent = data.branch || '—';
             document.getElementById('cp-top-state-value').textContent = formatAchievement(data.total);
         } else {
-            document.getElementById('lr-top-state-name').textContent = data.state || '—';
+            document.getElementById('lr-top-state-name').textContent = data.branch || '—';
             document.getElementById('lr-top-state-value').textContent = formatAchievement(data.total);
         }
     } catch (e) {
