@@ -400,13 +400,26 @@ def fetch_nbl_disbursed_df(year: int, month: int) -> list[dict]:
 
     logger.info("NBL: raw rows=%s", len(raw_rows))
     
+    # Debug: show first row keys and sample date value
+    if raw_rows:
+        first_row = raw_rows[0]
+        logger.info("NBL: first row keys: %s", list(first_row.keys()))
+        disb_val = _get_any(first_row, "disbursal_date", "Disbursal Date", "disbursed_date", "Disbursed Date")
+        logger.info("NBL: sample disbursal date value: %r", disb_val)
+    
     normalized: list[dict] = []
+    parse_fail = 0
+    date_mismatch = 0
     for rec in raw_rows:
         disb = _get_any(rec, "disbursal_date", "Disbursal Date", "disbursed_date", "Disbursed Date")
         disb_date = _parse_date_any(disb)
         if not disb_date:
+            parse_fail += 1
+            if parse_fail <= 3:
+                logger.info("NBL: parse_fail for date=%r", disb)
             continue
         if disb_date.year != year or disb_date.month != month:
+            date_mismatch += 1
             continue
 
         normalized.append(
@@ -422,6 +435,7 @@ def fetch_nbl_disbursed_df(year: int, month: int) -> list[dict]:
             }
         )
 
+    logger.info("NBL: normalized rows=%s (parse_fail=%s, date_mismatch=%s)", len(normalized), parse_fail, date_mismatch)
     return normalized
 
 
@@ -693,17 +707,14 @@ def fetch_lr_disbursed_df(year: int, month: int) -> list[dict]:
         
         logger.info("LR: page %s returned %s rows", page, len(rows))
         
-        # Check for duplicates - if all rows on this page are already in all_rows, we've looped
-        page_loan_nos = set(r.get("Loan No", r.get("Loan No.", r.get("loan_no", ""))) for r in rows)
-        existing_loan_nos = set(r.get("Loan No", r.get("Loan No.", r.get("loan_no", ""))) for r in all_rows)
-        if page_loan_nos and page_loan_nos.issubset(existing_loan_nos):
-            logger.info("LR: all rows on page %s are duplicates - stopping pagination", page)
-            break
-        
         all_rows.extend(rows)
         
         # If we got fewer rows than expected, we might be done - but verify next page
         if len(rows) < 10:
+            # If only 1 row, it's likely just a header - stop here
+            if len(rows) <= 1:
+                logger.info("LR: page %s returned only %s row(s) - likely header only, stopping", page, len(rows))
+                break
             logger.info("LR: partial page (%s rows) - checking if more pages exist", len(rows))
             # Try one more page to confirm we're done
             next_params = {"filter": "sortByThisMonth", "page": page + 1}
