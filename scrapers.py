@@ -388,8 +388,22 @@ def fetch_nbl_disbursed_df(year: int, month: int) -> list[dict]:
         payload.get("startDate"),
         payload.get("endDate"),
     )
-    r = session.post(NBL_DATA_URL, data=payload, headers=headers, timeout=180)
-    r.raise_for_status()
+    
+    # Retry logic for timeout issues
+    max_retries = 3
+    timeout_seconds = 300
+    for attempt in range(max_retries):
+        try:
+            logger.info("NBL: attempt %s/%s with timeout=%ss", attempt + 1, max_retries, timeout_seconds)
+            r = session.post(NBL_DATA_URL, data=payload, headers=headers, timeout=timeout_seconds)
+            r.raise_for_status()
+            break
+        except requests.exceptions.Timeout:
+            logger.warning("NBL: attempt %s timed out", attempt + 1)
+            if attempt == max_retries - 1:
+                raise
+            time.sleep(5)
+    
     logger.info("NBL: response %s bytes=%s", r.status_code, len(r.text))
 
     raw_rows: list[dict] = _rows_from_any_html_table(r.text)
