@@ -6,6 +6,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Dashboard- Daily Performance</title>
+    <link rel="icon" href="{{ url_for('static', filename='images/logo.png') }}" type="image/png">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
@@ -15,15 +16,17 @@
         <!-- Header -->
         <div class="header">
             <div class="welcome-text">Daily Performance Dashboard (ELI VS NBL)</div>
-            <a href="/cp-lr"
-                style="text-decoration: none; display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: linear-gradient(135deg, #5d9cec, #8b5cf6); color: white; border-radius: 20px; font-size: 0.9rem; font-weight: 500; transition: transform 0.2s;"
-                onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
-                CP/LR Dashboard
-            </a>
-            <div class="month-selector">
-                <button class="month-btn" onclick="changeMonth(-1)">← Prev</button>
-                <div class="current-month" id="current-month">January 2024</div>
-                <button class="month-btn" onclick="changeMonth(1)">Next →</button>
+            <div style="display:flex;gap:10px;align-items:center;">
+                <button onclick="testCelebrations()"
+                    style="cursor:pointer; border:none; display:flex; align-items:center; gap:6px; padding:8px 14px; background:linear-gradient(135deg,#f59e0b,#ef4444); color:white; border-radius:20px; font-size:0.85rem; font-weight:600; transition:transform 0.2s;"
+                    onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
+                    🎉 Test Alert
+                </button>
+                <a href="/cp-lr"
+                    style="text-decoration: none; display: flex; align-items: center; gap: 8px; padding: 8px 16px; background: linear-gradient(135deg, #5d9cec, #8b5cf6); color: white; border-radius: 20px; font-size: 0.9rem; font-weight: 500; transition: transform 0.2s;"
+                    onmouseover="this.style.transform='scale(1.05)'" onmouseout="this.style.transform='scale(1)'">
+                    CP/LR Dashboard
+                </a>
             </div>
         </div>
 
@@ -40,7 +43,7 @@
                 <div class="leader-progress-track">
                     <div id="focus-bar" class="leader-progress-bar"></div>
                 </div>
-                <div id="focus-text" class="leader-progress-text">0% of ₹9.25 Cr</div>
+                <div id="focus-text" class="leader-progress-text">0% of ₹9.75 Cr</div>
             </div>
         </div>
 
@@ -49,16 +52,11 @@
             <div class="metric-card eli-card">
                 <div class="metric-title">ELI Progress</div>
                 <div id="eli-score" class="metric-value">0%</div>
-                <div id="eli-trend" class="metric-trend trend-up">
-                    <span>↑</span>
-                    <span>Loading...</span>
-                </div>
-                <!-- ELI Progress Bar -->
                 <div class="progress-container">
                     <div class="progress-track">
                         <div id="eli-progress-bar" class="progress-fill eli-fill"></div>
                     </div>
-                    <div id="eli-progress-text" class="progress-text">0% of ₹4.25 Cr</div>
+                    <div id="eli-progress-text" class="progress-text">0% of ₹4.50 Cr</div>
                 </div>
                 <div class="data-update" id="eli-update">Live</div>
             </div>
@@ -66,14 +64,11 @@
             <div class="metric-card nbl-card">
                 <div class="metric-title">NBL Progress</div>
                 <div id="nbl-score" class="metric-value">0%</div>
-                <div id="nbl-trend" class="metric-trend trend-down">
-                </div>
-                <!-- NBL Progress Bar -->
                 <div class="progress-container">
                     <div class="progress-track">
                         <div id="nbl-progress-bar" class="progress-fill nbl-fill"></div>
                     </div>
-                    <div id="nbl-progress-text" class="progress-text">0% of ₹5 Cr</div>
+                    <div id="nbl-progress-text" class="progress-text">0% of ₹5.25 Cr</div>
                 </div>
                 <div class="data-update" id="nbl-update">Live</div>
             </div>
@@ -81,9 +76,7 @@
 
         <!-- ELI Top 3 -->
         <div class="eli-top-section">
-            <div class="section-title">
-                <span>ELI Leaders</span>
-            </div>
+            <div class="section-title"><span>ELI Leaders</span></div>
             <ul class="top-list" id="eli-list">
                 <li class="top-item loading">
                     <span class="rank-number">-</span>
@@ -110,8 +103,6 @@
                 </div>
                 <div class="tooltip" id="graph-tooltip"></div>
             </div>
-
-            <!-- Legend -->
             <div class="graph-legend">
                 <div class="legend-item">
                     <div class="legend-color" style="background: #5d9cec;"></div>
@@ -121,12 +112,6 @@
                     <div class="legend-color" style="background: #8b5cf6;"></div>
                     <span class="legend-text nbl-legend"><b>NBL</b></span>
                 </div>
-            </div>
-
-            <!-- Unit indicator moved here (inside the graph section) -->
-            <div class="unit-indicator" id="unit-indicator"
-                style="font-size: 0.8rem; color: #6c7a89; margin-top: 15px; text-align: center;">
-                <!-- Will show: "Displaying in ₹ Lakhs" -->
             </div>
         </div>
 
@@ -149,7 +134,9 @@
         </div>
     </div>
 
-    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/utils.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/celebrations.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/eli_nbl_dashboard.js') }}"></script>
 </body>
 
 </html>

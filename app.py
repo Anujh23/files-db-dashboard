@@ -17,7 +17,7 @@ except Exception:
 
 from dashboard.analytics.aggregations import daily_totals, month_name, top3, top_branch
 from dashboard.web.cache import RefreshCache
-from scrapers import fetch_combined_disbursed_df
+from scrapers import fetch_all_loans
 
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
@@ -42,11 +42,11 @@ _CACHE_TTL_SECONDS = 60
 _refresh_cache = RefreshCache(ttl_seconds=_CACHE_TTL_SECONDS)
 
 
-def _get_cached_df(year: int, month: int):
+def _get_loans(year: int, month: int):
     key = (year, month)
 
     def _fetch():
-        return fetch_combined_disbursed_df(year, month)
+        return fetch_all_loans(year, month)
 
     return _refresh_cache.get_cached(key, _fetch)
 
@@ -65,25 +65,25 @@ def _handle_unexpected_error(e):
     return ("Internal Server Error", 500)
 
 
-def _month_name(year: int, month: int) -> str:
-    return month_name(year, month)
+def _top3_response(source: str):
+    month = int(request.args.get("month", date.today().month))
+    year = int(request.args.get("year", date.today().year))
+    rows, err = _get_loans(year, month)
+    return jsonify({"top3": top3(rows, source), "error": err})
 
 
-def _top3(df, source: str):
-    return top3(df, source)
-
-
-def _top_branch(df, source: str):
-    return top_branch(df, source)
-
-
-def _daily_totals(df, source: str, year: int, month: int):
-    return daily_totals(df, source, year, month)
+def _top_state_response(source: str):
+    month = int(request.args.get("month", date.today().month))
+    year = int(request.args.get("year", date.today().year))
+    rows, err = _get_loans(year, month)
+    out = top_branch(rows, source)
+    out["error"] = err
+    return jsonify(out)
 
 
 @app.get("/")
 def home():
-    return render_template("index.html")
+    return render_template("eli_nbl.html")
 
 
 @app.get("/api/health")
@@ -106,7 +106,7 @@ def api_refresh():
     key = (year, month)
 
     def _fetch():
-        return fetch_combined_disbursed_df(year, month)
+        return fetch_all_loans(year, month)
 
     _refresh_cache.kickoff_refresh(key, _fetch)
     hit = _refresh_cache.get_entry(key) or {}
@@ -127,7 +127,7 @@ def api_refresh():
 def api_debug():
     month = int(request.args.get("month", date.today().month))
     year = int(request.args.get("year", date.today().year))
-    rows, err = _get_cached_df(year, month)
+    rows, err = _get_loans(year, month)
 
     sample = rows[:2]
     counts = {"ELI": 0, "NBL": 0}
@@ -148,56 +148,35 @@ def api_debug():
         }
     )
 @app.get("/api/eli-top3")
-def api_eli_top3():
-    month = int(request.args.get("month", date.today().month))
-    year = int(request.args.get("year", date.today().year))
-    rows, err = _get_cached_df(year, month)
-    return jsonify({"top3": _top3(rows, "ELI"), "error": err})
-
+def api_eli_top3(): return _top3_response("ELI")
 
 @app.get("/api/nbl-top3")
-def api_nbl_top3():
-    month = int(request.args.get("month", date.today().month))
-    year = int(request.args.get("year", date.today().year))
-    rows, err = _get_cached_df(year, month)
-    return jsonify({"top3": _top3(rows, "NBL"), "error": err})
-
+def api_nbl_top3(): return _top3_response("NBL")
 
 @app.get("/api/eli-top-state")
-def api_eli_top_state():
-    month = int(request.args.get("month", date.today().month))
-    year = int(request.args.get("year", date.today().year))
-    rows, err = _get_cached_df(year, month)
-    out = _top_branch(rows, "ELI")
-    out["error"] = err
-    return jsonify(out)
-
+def api_eli_top_state(): return _top_state_response("ELI")
 
 @app.get("/api/nbl-top-state")
-def api_nbl_top_state():
-    month = int(request.args.get("month", date.today().month))
-    year = int(request.args.get("year", date.today().year))
-    rows, err = _get_cached_df(year, month)
-    out = _top_branch(rows, "NBL")
-    out["error"] = err
-    return jsonify(out)
+def api_nbl_top_state(): return _top_state_response("NBL")
 
 
 # Load targets from environment variables with defaults
-ELI_TARGET = float(os.getenv("ELI_TARGET", "42500000"))  # ₹4.25 Cr default
-NBL_TARGET = float(os.getenv("NBL_TARGET", "50000000"))  # ₹5 Cr default
-CP_TARGET = float(os.getenv("CP_TARGET", "27500000"))  # ₹2.75 Cr default
-LR_TARGET = float(os.getenv("LR_TARGET", "22500000"))  # ₹2.25 Cr default
+ELI_TARGET = float(os.getenv("ELI_TARGET", "45000000"))  # ₹4.50 Cr default
+NBL_TARGET = float(os.getenv("NBL_TARGET", "52500000"))  # ₹5.25 Cr default
+CP_TARGET = float(os.getenv("CP_TARGET", "23500000"))  # ₹2.35 Cr default
+LR_TARGET = float(os.getenv("LR_TARGET", "24000000"))  # ₹2.40 Cr default
 
 
 @app.get("/api/dashboard-stats")
 def api_dashboard_stats():
     month = int(request.args.get("month", date.today().month))
     year = int(request.args.get("year", date.today().year))
-    rows, err = _get_cached_df(year, month)
+    rows, err = _get_loans(year, month)
 
-    eli_total = sum(float(r.get("loan_amount") or 0.0) for r in rows if r.get("source") == "ELI")
-    nbl_total = sum(float(r.get("loan_amount") or 0.0) for r in rows if r.get("source") == "NBL")
+    eli_rows = [r for r in rows if r.get("source") == "ELI"]
+    nbl_rows = [r for r in rows if r.get("source") == "NBL"]
+    eli_total = sum(float(r.get("loan_amount") or 0.0) for r in eli_rows)
+    nbl_total = sum(float(r.get("loan_amount") or 0.0) for r in nbl_rows)
     combined_total = eli_total + nbl_total
 
     eli_target = ELI_TARGET
@@ -208,9 +187,8 @@ def api_dashboard_stats():
     nbl_progress_pct = round(min(100.0, (nbl_total / nbl_target) * 100.0), 2) if nbl_target else 0.0
     leader_progress_pct = round(min(100.0, (combined_total / combined_target) * 100.0), 2) if combined_target else 0.0
 
-    # Score mirrors progress pct
-    eli_score = eli_progress_pct
-    nbl_score = nbl_progress_pct
+    # Days-in-month for run-rate calculation (frontend uses this)
+    days_in_month = calendar.monthrange(year, month)[1]
 
     return jsonify(
         {
@@ -220,11 +198,17 @@ def api_dashboard_stats():
             "eli_total": eli_total,
             "nbl_total": nbl_total,
             "combined_total": combined_total,
+            "eli_target": eli_target,
+            "nbl_target": nbl_target,
+            "combined_target": combined_target,
+            "eli_count": len(eli_rows),
+            "nbl_count": len(nbl_rows),
             "eli_progress_pct": eli_progress_pct,
             "nbl_progress_pct": nbl_progress_pct,
             "leader_progress_pct": leader_progress_pct,
-            "eli_score": eli_score,
-            "nbl_score": nbl_score,
+            "eli_score": eli_progress_pct,
+            "nbl_score": nbl_progress_pct,
+            "days_in_month": days_in_month,
         }
     )
 
@@ -233,14 +217,14 @@ def api_dashboard_stats():
 def api_daily_performance():
     month = int(request.args.get("month", date.today().month))
     year = int(request.args.get("year", date.today().year))
-    rows, err = _get_cached_df(year, month)
+    rows, err = _get_loans(year, month)
 
-    days, eli_totals = _daily_totals(rows, "ELI", year, month)
-    _, nbl_totals = _daily_totals(rows, "NBL", year, month)
+    days, eli_totals = daily_totals(rows, "ELI", year, month)
+    _, nbl_totals = daily_totals(rows, "NBL", year, month)
 
     return jsonify(
         {
-            "current_month": _month_name(year, month),
+            "current_month": month_name(year, month),
             "error": err,
             "days": days,
             "eli_daily_totals": eli_totals,
@@ -250,49 +234,29 @@ def api_daily_performance():
 
 
 @app.get("/api/cp-top3")
-def api_cp_top3():
-    month = int(request.args.get("month", date.today().month))
-    year = int(request.args.get("year", date.today().year))
-    rows, err = _get_cached_df(year, month)
-    return jsonify({"top3": _top3(rows, "CP"), "error": err})
-
+def api_cp_top3(): return _top3_response("CP")
 
 @app.get("/api/lr-top3")
-def api_lr_top3():
-    month = int(request.args.get("month", date.today().month))
-    year = int(request.args.get("year", date.today().year))
-    rows, err = _get_cached_df(year, month)
-    return jsonify({"top3": _top3(rows, "LR"), "error": err})
-
+def api_lr_top3(): return _top3_response("LR")
 
 @app.get("/api/cp-top-state")
-def api_cp_top_state():
-    month = int(request.args.get("month", date.today().month))
-    year = int(request.args.get("year", date.today().year))
-    rows, err = _get_cached_df(year, month)
-    out = _top_branch(rows, "CP")
-    out["error"] = err
-    return jsonify(out)
-
+def api_cp_top_state(): return _top_state_response("CP")
 
 @app.get("/api/lr-top-state")
-def api_lr_top_state():
-    month = int(request.args.get("month", date.today().month))
-    year = int(request.args.get("year", date.today().year))
-    rows, err = _get_cached_df(year, month)
-    out = _top_branch(rows, "LR")
-    out["error"] = err
-    return jsonify(out)
+def api_lr_top_state(): return _top_state_response("LR")
     
 @app.get("/api/cp-lr-stats")
 def api_cp_lr_stats():
     month = int(request.args.get("month", date.today().month))
     year = int(request.args.get("year", date.today().year))
-    rows, err = _get_cached_df(year, month)
+    rows, err = _get_loans(year, month)
 
-    cp_total = sum(float(r.get("loan_amount") or 0.0) for r in rows if r.get("source") == "CP")
-    lr_total = sum(float(r.get("loan_amount") or 0.0) for r in rows if r.get("source") == "LR")
+    cp_rows = [r for r in rows if r.get("source") == "CP"]
+    lr_rows = [r for r in rows if r.get("source") == "LR"]
+    cp_total = sum(float(r.get("loan_amount") or 0.0) for r in cp_rows)
+    lr_total = sum(float(r.get("loan_amount") or 0.0) for r in lr_rows)
     combined_total = cp_total + lr_total
+    days_in_month = calendar.monthrange(year, month)[1]
 
     cp_target = CP_TARGET
     lr_target = LR_TARGET
@@ -315,11 +279,14 @@ def api_cp_lr_stats():
             "cp_target": cp_target,
             "lr_target": lr_target,
             "combined_target": combined_target,
+            "cp_count": len(cp_rows),
+            "lr_count": len(lr_rows),
             "cp_progress_pct": cp_progress_pct,
             "lr_progress_pct": lr_progress_pct,
             "combined_progress_pct": combined_progress_pct,
             "cp_score": cp_progress_pct,
             "lr_score": lr_progress_pct,
+            "days_in_month": days_in_month,
         }
     )
 
@@ -328,20 +295,41 @@ def api_cp_lr_stats():
 def api_cp_lr_daily():
     month = int(request.args.get("month", date.today().month))
     year = int(request.args.get("year", date.today().year))
-    rows, err = _get_cached_df(year, month)
+    rows, err = _get_loans(year, month)
 
-    days, cp_totals = _daily_totals(rows, "CP", year, month)
-    _, lr_totals = _daily_totals(rows, "LR", year, month)
+    days, cp_totals = daily_totals(rows, "CP", year, month)
+    _, lr_totals = daily_totals(rows, "LR", year, month)
 
     return jsonify(
         {
-            "current_month": _month_name(year, month),
+            "current_month": month_name(year, month),
             "error": err,
             "days": days,
             "cp_daily_totals": cp_totals,
             "lr_daily_totals": lr_totals,
         }
     )
+
+
+@app.get("/api/recent-highlights")
+def api_recent_highlights():
+    month = int(request.args.get("month", date.today().month))
+    year = int(request.args.get("year", date.today().year))
+    rows, err = _get_loans(year, month)
+
+    highlights = [
+        {
+            "loan_no": r.get("loan_no", ""),
+            "credit_by": r.get("credit_by", ""),
+            "loan_amount": r.get("loan_amount", 0),
+            "source": r.get("source", ""),
+            "disbursal_date": str(r.get("disbursal_date", "")),
+        }
+        for r in rows
+        if float(r.get("loan_amount") or 0) >= 100000
+    ]
+    highlights.sort(key=lambda x: x["disbursal_date"], reverse=True)
+    return jsonify({"highlights": highlights, "error": err})
 
 
 @app.get("/cp-lr")

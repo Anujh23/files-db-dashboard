@@ -27,12 +27,4 @@ services:
         sync: false
       - key: LR_PASSWORD
         sync: false
-      # Targets (in INR, without commas)
-      - key: ELI_TARGET
-        value: "42500000"
-      - key: NBL_TARGET
-        value: "50000000"
-      - key: CP_TARGET
-        value: "27500000"
-      - key: LR_TARGET
-        value: "22500000"
+     

@@ -1,11 +1,21 @@
 import calendar
+import csv
+import io
 import logging
 import os
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 import warnings
 import requests
 import urllib3
 from bs4 import BeautifulSoup
+
+try:
+    import openpyxl
+    _OPENPYXL_AVAILABLE = True
+except ImportError:
+    _OPENPYXL_AVAILABLE = False
 
 try:
     from dotenv import load_dotenv
@@ -109,8 +119,8 @@ def _parse_date_any(v) -> date | None:
                     return d
     return None
 
-def _get_any(d: dict, *keys):
-    """Get value from dict with any of the given keys."""
+def _get_field(d: dict, *keys):
+    """Return the first non-empty value found under any of the given keys."""
     for k in keys:
         if k in d and d[k] not in (None, ""):
             return d[k]
@@ -168,7 +178,7 @@ def _eli_login(session: requests.Session) -> None:
     logger.info("ELI: login OK -> %s", r2.url)
 
 
-def fetch_eli_disbursed_df(year: int, month: int) -> list[dict]:
+def fetch_eli_loans(year: int, month: int) -> list[dict]:
     start_d, end_d = _month_date_range(year, month)
 
     logger.info("ELI: fetching disbursed data for %04d-%02d (%s..%s)", year, month, start_d, end_d)
@@ -261,7 +271,7 @@ def fetch_eli_disbursed_df(year: int, month: int) -> list[dict]:
     return normalized
 
 
-def fetch_nbl_disbursed_df(year: int, month: int) -> list[dict]:
+def fetch_nbl_loans(year: int, month: int) -> list[dict]:
     if not NBL_USERNAME or not NBL_PASSWORD:
         raise RuntimeError("Missing NBL credentials. Set NBL_USERNAME and NBL_PASSWORD environment variables.")
 
@@ -368,7 +378,7 @@ def fetch_nbl_disbursed_df(year: int, month: int) -> list[dict]:
 
     # NBL sometimes does not support DataTables JSON pagination reliably.
     # Use ELI-style: visit page and POST the search form once.
-    session.get(NBL_DATA_URL, timeout=60)
+    session.get(NBL_DATA_URL, timeout=90)
 
     headers = {
         "Referer": NBL_DATA_URL,
@@ -391,7 +401,7 @@ def fetch_nbl_disbursed_df(year: int, month: int) -> list[dict]:
     
     # Retry logic for timeout issues
     max_retries = 3
-    timeout_seconds = 300
+    timeout_seconds = 90
     for attempt in range(max_retries):
         try:
             logger.info("NBL: attempt %s/%s with timeout=%ss", attempt + 1, max_retries, timeout_seconds)
@@ -402,11 +412,11 @@ def fetch_nbl_disbursed_df(year: int, month: int) -> list[dict]:
             logger.warning("NBL: attempt %s timed out", attempt + 1)
             if attempt == max_retries - 1:
                 raise
-            time.sleep(5)
+            time.sleep(3)
     
     logger.info("NBL: response %s bytes=%s", r.status_code, len(r.text))
 
-    raw_rows: list[dict] = _rows_from_any_html_table(r.text)
+    raw_rows: list[dict] = _parse_html_table(r.text)
 
     if not raw_rows:
         logger.warning("NBL: fetched 0 rows")
@@ -418,14 +428,14 @@ def fetch_nbl_disbursed_df(year: int, month: int) -> list[dict]:
     if raw_rows:
         first_row = raw_rows[0]
         logger.info("NBL: first row keys: %s", list(first_row.keys()))
-        disb_val = _get_any(first_row, "disbursal_date", "Disbursal Date", "disbursed_date", "Disbursed Date")
+        disb_val = _get_field(first_row, "disbursal_date", "Disbursal Date", "disbursed_date", "Disbursed Date")
         logger.info("NBL: sample disbursal date value: %r", disb_val)
     
     normalized: list[dict] = []
     parse_fail = 0
     date_mismatch = 0
     for rec in raw_rows:
-        disb = _get_any(rec, "disbursal_date", "Disbursal Date", "disbursed_date", "Disbursed Date")
+        disb = _get_field(rec, "disbursal_date", "Disbursal Date", "disbursed_date", "Disbursed Date")
         disb_date = _parse_date_any(disb)
         if not disb_date:
             parse_fail += 1
@@ -440,12 +450,12 @@ def fetch_nbl_disbursed_df(year: int, month: int) -> list[dict]:
             {
                 "source": "NBL",
                 "disbursal_date": disb_date,
-                "credit_by": str(_get_any(rec, "credit_by", "Credit By") or "").strip(),
-                "loan_amount": _clean_amount(_get_any(rec, "loan_amount", "Loan Amount", "amount")),
-                "branch": str(_get_any(rec, "branch", "Branch") or "").strip(),
-                "state": str(_get_any(rec, "state", "State", "Branch", "branch") or "").strip(),
-                "loan_no": str(_get_any(rec, "loan_no", "Loan No", "Loan No.") or "").strip(),
-                "lead_id": str(_get_any(rec, "lead_id", "LeadID", "Lead Id") or "").strip(),
+                "credit_by": str(_get_field(rec, "credit_by", "Credit By") or "").strip(),
+                "loan_amount": _clean_amount(_get_field(rec, "loan_amount", "Loan Amount", "amount")),
+                "branch": str(_get_field(rec, "branch", "Branch") or "").strip(),
+                "state": str(_get_field(rec, "state", "State", "Branch", "branch") or "").strip(),
+                "loan_no": str(_get_field(rec, "loan_no", "Loan No", "Loan No.") or "").strip(),
+                "lead_id": str(_get_field(rec, "lead_id", "LeadID", "Lead Id") or "").strip(),
             }
         )
 
@@ -536,7 +546,54 @@ def _crm_login(session: requests.Session, *, label: str, login_url: str, usernam
         raise RuntimeError(f"{label} login failed (final url={r2.url})")
 
 
-def _rows_from_any_html_table(html_text: str):
+def _parse_export_file(response: requests.Response, label: str) -> list[dict]:
+    """Parse an export file response (xlsx or csv) into a list of dicts."""
+    content_type = (response.headers.get("Content-Type") or "").lower()
+    content = response.content
+
+    # Try Excel first (xlsx)
+    is_xlsx = (
+        "spreadsheet" in content_type
+        or "excel" in content_type
+        or "openxmlformats" in content_type
+        or content[:4] == b"PK\x03\x04"  # ZIP magic bytes for xlsx
+    )
+    if is_xlsx and _OPENPYXL_AVAILABLE:
+        try:
+            wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+            ws = wb.active
+            rows = list(ws.iter_rows(values_only=True))
+            wb.close()
+            if not rows:
+                logger.warning("%s: export xlsx has no rows", label)
+                return []
+            headers = [str(h).strip() if h is not None else f"col_{i+1}" for i, h in enumerate(rows[0])]
+            result = []
+            for row in rows[1:]:
+                if all(v is None or str(v).strip() == "" for v in row):
+                    continue
+                result.append({headers[i]: (row[i] if i < len(row) else None) for i in range(len(headers))})
+            logger.info("%s: export xlsx parsed %s rows (headers=%s)", label, len(result), headers[:5])
+            return result
+        except Exception as e:
+            logger.warning("%s: xlsx parse failed (%s), trying csv", label, e)
+
+    # Try CSV
+    try:
+        text = content.decode("utf-8-sig", errors="replace")
+        reader = csv.DictReader(io.StringIO(text))
+        result = [row for row in reader]
+        if result:
+            logger.info("%s: export csv parsed %s rows", label, len(result))
+            return result
+    except Exception as e:
+        logger.warning("%s: csv parse failed (%s)", label, e)
+
+    logger.warning("%s: export response not xlsx or csv (content_type=%s, bytes=%s)", label, content_type, len(content))
+    return []
+
+
+def _parse_html_table(html_text: str):
     html_soup = BeautifulSoup(html_text, "html.parser")
     table = html_soup.find("table")
     if not table:
@@ -561,248 +618,150 @@ def _rows_from_any_html_table(html_text: str):
     return rows_local
 
 
-def fetch_cp_disbursed_df(year: int, month: int) -> list[dict]:
-    if not CP_USERNAME or not CP_PASSWORD:
-        raise RuntimeError("Missing CP credentials. Set CP_USERNAME and CP_PASSWORD environment variables.")
+def _fetch_crm_loans(
+    year: int, month: int, *,
+    label: str, login_url: str, data_url: str, username: str, password: str
+) -> list[dict]:
+    """Shared fetcher for CRM portals (CP and LR) that support exportByDate."""
+    if not username or not password:
+        raise RuntimeError(f"Missing {label} credentials.")
 
-    logger.info("CP: fetching disbursed data for %04d-%02d", year, month)
+    logger.info("%s: fetching disbursed data for %04d-%02d", label, year, month)
 
     session = requests.Session()
-    _crm_login(session, label="CP", login_url=CP_LOGIN_URL, username=CP_USERNAME, password=CP_PASSWORD)
+    _crm_login(session, label=label, login_url=login_url, username=username, password=password)
 
-    # Fetch all pages with sortByThisMonth
-    all_rows: list[dict] = []
-    page = 1
-    max_pages = 1000
-    
-    while page <= max_pages:
-        params = {
-            "filter": "sortByThisMonth",
-            "page": page,
-        }
-        headers = {"Referer": CP_DATA_URL}
-        
-        logger.info("CP: GET page %s %s", page, CP_DATA_URL)
-        r = session.get(CP_DATA_URL, params=params, headers=headers, timeout=90, verify=False)
-        r.raise_for_status()
-        
-        rows = _rows_from_any_html_table(r.text)
-        if not rows:
-            logger.info("CP: no more rows at page %s", page)
-            break
-        
-        logger.info("CP: page %s returned %s rows", page, len(rows))
-        
-        # Check for duplicates - if all rows on this page are already in all_rows, we've looped
-        page_loan_nos = set(r.get("Loan No", r.get("Loan No.", r.get("loan_no", ""))) for r in rows)
-        existing_loan_nos = set(r.get("Loan No", r.get("Loan No.", r.get("loan_no", ""))) for r in all_rows)
-        if page_loan_nos and page_loan_nos.issubset(existing_loan_nos):
-            logger.info("CP: all rows on page %s are duplicates - stopping pagination", page)
-            break
-        
-        all_rows.extend(rows)
-        
-        # If we got fewer rows than expected, we might be done - but verify next page
-        if len(rows) < 10:
-            logger.info("CP: partial page (%s rows) - checking if more pages exist", len(rows))
-            # Try one more page to confirm we're done
-            next_params = {"filter": "sortByThisMonth", "page": page + 1}
-            next_r = session.get(CP_DATA_URL, params=next_params, headers=headers, timeout=90, verify=False)
-            next_rows = _rows_from_any_html_table(next_r.text)
-            if not next_rows:
-                logger.info("CP: confirmed - no more data after page %s", page)
+    start_d, end_d = _month_date_range(year, month)
+    date_range_str = f"{start_d.strftime('%m/%d/%Y')} - {end_d.strftime('%m/%d/%Y')}"
+
+    # Try export endpoint first (single request, exact data)
+    r = session.get(
+        data_url,
+        params={"filter": "exportByDate", "exportRange": date_range_str},
+        headers={"Referer": data_url},
+        timeout=120,
+        verify=False,
+    )
+    r.raise_for_status()
+    logger.info("%s: export response status=%s content_type=%s bytes=%s",
+                label, r.status_code, r.headers.get("Content-Type"), len(r.content))
+
+    all_rows = _parse_export_file(r, label)
+
+    # Fallback: paginate via sortByDate if export returned nothing
+    if not all_rows:
+        logger.warning("%s: export returned 0 rows, falling back to sortByDate pagination", label)
+        page = 1
+        while page <= 1000:
+            r2 = session.get(
+                data_url,
+                params={"filter": "sortByDate", "searchRange": date_range_str, "page": page},
+                headers={"Referer": data_url},
+                timeout=90,
+                verify=False,
+            )
+            r2.raise_for_status()
+            rows = _parse_html_table(r2.text)
+            if not rows or len(rows) <= 1:
                 break
-            else:
-                logger.info("CP: more data found on page %s (%s rows), continuing", page + 1, len(next_rows))
-        
-        page += 1
-    
-    logger.info("CP: total rows fetched across %s pages: %s", page, len(all_rows))
-    
-    # Debug: Check for duplicate loan numbers across pages
-    loan_nos = [r.get("Loan No", r.get("Loan No.", r.get("loan_no", ""))) for r in all_rows]
-    unique_loan_nos = set(loan_nos)
-    logger.info("CP: unique loan numbers: %s, duplicates: %s", len(unique_loan_nos), len(loan_nos) - len(unique_loan_nos))
+            logger.info("%s: fallback page %s → %s rows", label, page, len(rows))
+            all_rows.extend(rows)
+            if len(rows) < 10:
+                break
+            page += 1
+        # Dedup by loan_no to handle cross-page overlaps
+        seen_ln: set[str] = set()
+        deduped: list[dict] = []
+        for row in all_rows:
+            ln = str(row.get("Loan No", row.get("Loan No.", "")) or "").strip()
+            if ln and ln in seen_ln:
+                continue
+            if ln:
+                seen_ln.add(ln)
+            deduped.append(row)
+        all_rows = deduped
 
     if not all_rows:
-        logger.warning("CP: fetched 0 rows")
+        logger.warning("%s: fetched 0 rows after all attempts", label)
         return []
 
-    # Debug: show first row keys and sample date value
-    if all_rows:
-        first_row = all_rows[0]
-        logger.info("CP: first row keys: %s", list(first_row.keys()))
-        disb_val = _get_any(first_row, "Disbursal Date", "Disbursed Date", "disbursal_date", "disbursed_date", "Date")
-        logger.info("CP: sample disbursal date value: %r", disb_val)
+    logger.info("%s: first row keys: %s", label, list(all_rows[0].keys()))
 
     normalized: list[dict] = []
     parse_fail = 0
     date_mismatch = 0
-    total_amount_skipped = 0.0
-    
-    # Debug: Show some sample rows before filtering
-    if all_rows:
-        logger.info("CP: checking first 5 rows for dates...")
-        for i, rec in enumerate(all_rows[:5]):
-            disb = _get_any(rec, "Disbursal Date", "Disbursed Date", "disbursal_date", "disbursed_date", "Date")
-            loan_amt = _clean_amount(_get_any(rec, "Loan Amount", "loan_amount", "Amount"))
-            disb_amt = _clean_amount(_get_any(rec, "Disbursed Amount", "disbursed_amount"))
-            logger.info("CP: row %s raw date=%r loan_amount=%s disbursed_amount=%s", i, disb, loan_amt, disb_amt)
-    
     for rec in all_rows:
-        disb = _get_any(rec, "Disbursal Date", "Disbursed Date", "disbursal_date", "disbursed_date", "Date")
-        loan_amt = _clean_amount(_get_any(rec, "Loan Amount", "loan_amount", "Amount", "Disbursed Amount", "disbursed_amount"))
+        disb = _get_field(rec, "Disbursal Date", "Disbursed Date", "disbursal_date", "disbursed_date", "Date")
         disb_date = _parse_date_any(disb)
         if not disb_date:
             parse_fail += 1
-            total_amount_skipped += float(loan_amt or 0)
             if parse_fail <= 3:
-                logger.info("CP: parse_fail for date=%r amount=%s", disb, loan_amt)
+                logger.info("%s: parse_fail for date=%r", label, disb)
             continue
         if disb_date.year != year or disb_date.month != month:
             date_mismatch += 1
-            total_amount_skipped += float(loan_amt or 0)
-            # Log ALL date mismatches to see what extra dates are being fetched
-            logger.info("CP: DATE_MISMATCH row=%s date=%s amt=%s", date_mismatch, disb_date, loan_amt)
+            logger.info("%s: DATE_MISMATCH date=%s", label, disb_date)
             continue
 
-        normalized.append(
-            {
-                "source": "CP",
-                "disbursal_date": disb_date,
-                "credit_by": str(_get_any(rec, "Credit By", "credit_by", "CM", "Sales", "Sanction By") or "").strip(),
-                "loan_amount": loan_amt,
-                "branch": str(_get_any(rec, "Branch", "branch") or "").strip(),
-                "state": str(_get_any(rec, "State", "state", "Location", "location", "Region", "region", "City", "city", "Area", "area", "Branch", "branch") or "").strip(),
-                "loan_no": str(_get_any(rec, "Loan No", "Loan No.", "loan_no", "Loan Number") or "").strip(),
-                "lead_id": str(_get_any(rec, "LeadID", "Lead Id", "lead_id", "Lead ID") or "").strip(),
-            }
-        )
+        normalized.append({
+            "source": label,
+            "disbursal_date": disb_date,
+            "credit_by": str(_get_field(rec, "Credit By", "credit_by", "CM", "Sales", "Sanction By") or "").strip(),
+            "loan_amount": _clean_amount(
+                _get_field(rec, "Loan Amount", "loan_amount", "Amount", "Disbursed Amount", "disbursed_amount")
+            ),
+            "branch": str(_get_field(rec, "Branch", "branch") or "").strip(),
+            "state": str(_get_field(rec, "State", "state", "Location", "location", "Region", "region",
+                                  "City", "city", "Area", "area", "Branch", "branch") or "").strip(),
+            "loan_no": str(_get_field(rec, "Loan No", "Loan No.", "loan_no", "Loan Number") or "").strip(),
+            "lead_id": str(_get_field(rec, "LeadID", "Lead Id", "lead_id", "Lead ID") or "").strip(),
+        })
 
-    total_normalized = sum(float(r.get("loan_amount") or 0) for r in normalized)
-    logger.info("CP: normalized rows=%s (parse_fail=%s, date_mismatch=%s)", len(normalized), parse_fail, date_mismatch)
-    logger.info("CP: total amount normalized=%s, skipped=%s", total_normalized, total_amount_skipped)
-    # Debug: show sample state values
-    if normalized:
-        for i, r in enumerate(normalized[:3]):
-            logger.info("CP: row %s state=%r", i, r.get("state"))
+    total = sum(float(r.get("loan_amount") or 0) for r in normalized)
+    logger.info("%s: normalized rows=%s (parse_fail=%s, date_mismatch=%s) total=%.2f",
+                label, len(normalized), parse_fail, date_mismatch, total)
     return normalized
 
 
-def fetch_lr_disbursed_df(year: int, month: int) -> list[dict]:
-    if not LR_USERNAME or not LR_PASSWORD:
-        raise RuntimeError("Missing LR credentials. Set LR_USERNAME and LR_PASSWORD environment variables.")
-
-    logger.info("LR: fetching disbursed data for %04d-%02d", year, month)
-
-    session = requests.Session()
-    _crm_login(session, label="LR", login_url=LR_LOGIN_URL, username=LR_USERNAME, password=LR_PASSWORD)
-
-    # Fetch all pages with sortByThisMonth
-    all_rows: list[dict] = []
-    page = 1
-    max_pages = 1000
-    
-    while page <= max_pages:
-        params = {
-            "filter": "sortByThisMonth",
-            "page": page,
-        }
-        headers = {"Referer": LR_DATA_URL}
-        
-        logger.info("LR: GET page %s %s", page, LR_DATA_URL)
-        r = session.get(LR_DATA_URL, params=params, headers=headers, timeout=90, verify=False)
-        r.raise_for_status()
-        
-        rows = _rows_from_any_html_table(r.text)
-        if not rows:
-            logger.info("LR: no more rows at page %s", page)
-            break
-        
-        logger.info("LR: page %s returned %s rows", page, len(rows))
-        
-        all_rows.extend(rows)
-        
-        # If we got fewer rows than expected, we might be done - but verify next page
-        if len(rows) < 10:
-            # If only 1 row, it's likely just a header - stop here
-            if len(rows) <= 1:
-                logger.info("LR: page %s returned only %s row(s) - likely header only, stopping", page, len(rows))
-                break
-            logger.info("LR: partial page (%s rows) - checking if more pages exist", len(rows))
-            # Try one more page to confirm we're done
-            next_params = {"filter": "sortByThisMonth", "page": page + 1}
-            next_r = session.get(LR_DATA_URL, params=next_params, headers=headers, timeout=90, verify=False)
-            next_rows = _rows_from_any_html_table(next_r.text)
-            if not next_rows:
-                logger.info("LR: confirmed - no more data after page %s", page)
-                break
-            else:
-                logger.info("LR: more data found on page %s (%s rows), continuing", page + 1, len(next_rows))
-        
-        page += 1
-    
-    logger.info("LR: total rows fetched across %s pages: %s", page, len(all_rows))
-    
-    # Debug: Check for duplicate loan numbers across pages
-    loan_nos = [r.get("Loan No", r.get("Loan No.", r.get("loan_no", ""))) for r in all_rows]
-    unique_loan_nos = set(loan_nos)
-    logger.info("LR: unique loan numbers: %s, duplicates: %s", len(unique_loan_nos), len(loan_nos) - len(unique_loan_nos))
-
-    if not all_rows:
-        logger.warning("LR: fetched 0 rows")
-        return []
-
-    # Debug: show first row keys and sample date value
-    if all_rows:
-        first_row = all_rows[0]
-        logger.info("LR: first row keys: %s", list(first_row.keys()))
-        disb_val = _get_any(first_row, "Disbursal Date", "Disbursed Date", "disbursal_date", "disbursed_date", "Date")
-        logger.info("LR: sample disbursal date value: %r", disb_val)
-
-    normalized: list[dict] = []
-    parse_fail = 0
-    date_mismatch = 0
-    for rec in all_rows:
-        disb = _get_any(rec, "Disbursal Date", "Disbursed Date", "disbursal_date", "disbursed_date", "Date")
-        disb_date = _parse_date_any(disb)
-        if not disb_date:
-            parse_fail += 1
-            continue
-        if disb_date.year != year or disb_date.month != month:
-            date_mismatch += 1
-            continue
-
-        normalized.append(
-            {
-                "source": "LR",
-                "disbursal_date": disb_date,
-                "credit_by": str(_get_any(rec, "Credit By", "credit_by", "CM", "Sales", "Sanction By") or "").strip(),
-                "loan_amount": _clean_amount(
-                    _get_any(rec, "Loan Amount", "loan_amount", "Amount", "Disbursed Amount", "disbursed_amount")
-                ),
-                "branch": str(_get_any(rec, "Branch", "branch") or "").strip(),
-                "state": str(_get_any(rec, "State", "state", "Branch", "branch") or "").strip(),
-                "loan_no": str(_get_any(rec, "Loan No", "Loan No.", "loan_no", "Loan Number") or "").strip(),
-                "lead_id": str(_get_any(rec, "LeadID", "Lead Id", "lead_id", "Lead ID") or "").strip(),
-            }
-        )
-
-    logger.info("LR: normalized rows=%s (parse_fail=%s, date_mismatch=%s)", len(normalized), parse_fail, date_mismatch)
-    return normalized
+def fetch_cp_loans(year: int, month: int) -> list[dict]:
+    return _fetch_crm_loans(
+        year, month,
+        label="CP", login_url=CP_LOGIN_URL, data_url=CP_DATA_URL,
+        username=CP_USERNAME, password=CP_PASSWORD,
+    )
 
 
-def fetch_combined_disbursed_df(year: int, month: int) -> list[dict]:
-    eli = fetch_eli_disbursed_df(year, month)
-    nbl = fetch_nbl_disbursed_df(year, month)
-    cp = fetch_cp_disbursed_df(year, month)
-    lr = fetch_lr_disbursed_df(year, month)
-    
-    logger.info("NBL: fetched %s rows", len(nbl))
-    combined = list(eli) + list(nbl) + list(cp) + list(lr)
+def fetch_lr_loans(year: int, month: int) -> list[dict]:
+    return _fetch_crm_loans(
+        year, month,
+        label="LR", login_url=LR_LOGIN_URL, data_url=LR_DATA_URL,
+        username=LR_USERNAME, password=LR_PASSWORD,
+    )
+
+
+def fetch_all_loans(year: int, month: int) -> list[dict]:
+    sources = [
+        ("ELI", fetch_eli_loans),
+        ("NBL", fetch_nbl_loans),
+        ("CP", fetch_cp_loans),
+        ("LR", fetch_lr_loans),
+    ]
+    results = {}
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        future_to_label = {pool.submit(fn, year, month): label for label, fn in sources}
+        for future in as_completed(future_to_label):
+            label = future_to_label[future]
+            try:
+                results[label] = future.result()
+            except Exception as exc:
+                logger.error("%s: fetch failed - %s", label, exc)
+                results[label] = []
+
+    eli, nbl, cp, lr = results["ELI"], results["NBL"], results["CP"], results["LR"]
+    combined = eli + nbl + cp + lr
     combined = [r for r in combined if r.get("disbursal_date") and r.get("loan_amount") is not None]
     for r in combined:
         r["credit_by"] = str(r.get("credit_by") or "").strip()
-    
+
     logger.info("COMBINED: ELI=%s NBL=%s CP=%s LR=%s TOTAL=%s", len(eli), len(nbl), len(cp), len(lr), len(combined))
     return combined
