@@ -38,7 +38,7 @@ def _log_request():
         pass
 
 
-_CACHE_TTL_SECONDS = 60
+_CACHE_TTL_SECONDS = 120
 _refresh_cache = RefreshCache(ttl_seconds=_CACHE_TTL_SECONDS)
 
 
@@ -330,6 +330,7 @@ def api_recent_highlights():
     ]
     highlights.sort(key=lambda x: x["disbursal_date"], reverse=True)
     return jsonify({"highlights": highlights, "error": err})
+
 
 
 @app.get("/cp-lr")

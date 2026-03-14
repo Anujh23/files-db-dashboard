@@ -111,18 +111,3 @@ async function checkCelebrations(month, year, notify = true) {
     }
 }
 
-// ── TEST FUNCTION ────────────────────────────────────────
-// Called by the test button. Shows fake toasts across all sources.
-function testCelebrations() {
-    const today = new Date().toISOString().split('T')[0];
-    const samples = [
-        { credit_by: 'Amit Sharma',      loan_amount: 1250000, source: 'ELI', disbursal_date: today },
-        { credit_by: 'Priya Mehta',      loan_amount: 350000,  source: 'NBL', disbursal_date: today },
-        { credit_by: 'Chitranshi Singh', loan_amount: 550000,  source: 'LR',  disbursal_date: today },
-        { credit_by: 'Ravi Kumar',       loan_amount: 200000,  source: 'CP',  disbursal_date: today },
-    ];
-    samples.forEach((s, i) => {
-        s.loan_no = `TEST-${Date.now()}-${i}`;
-        setTimeout(() => showCelebrationToast(s), i * 900);
-    });
-}

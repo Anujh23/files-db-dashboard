@@ -15,11 +15,11 @@ from scrapers import (  # type: ignore
     NBL_DATA_URL,
     NBL_PASSWORD,
     NBL_USERNAME,
-    fetch_combined_disbursed_df,
-    fetch_cp_disbursed_df,
-    fetch_eli_disbursed_df,
-    fetch_lr_disbursed_df,
-    fetch_nbl_disbursed_df,
+    fetch_all_loans,
+    fetch_cp_loans,
+    fetch_eli_loans,
+    fetch_lr_loans,
+    fetch_nbl_loans,
 )
 
 __all__ = [
@@ -39,9 +39,9 @@ __all__ = [
     "NBL_DATA_URL",
     "NBL_PASSWORD",
     "NBL_USERNAME",
-    "fetch_combined_disbursed_df",
-    "fetch_cp_disbursed_df",
-    "fetch_eli_disbursed_df",
-    "fetch_lr_disbursed_df",
-    "fetch_nbl_disbursed_df",
+    "fetch_all_loans",
+    "fetch_cp_loans",
+    "fetch_eli_loans",
+    "fetch_lr_loans",
+    "fetch_nbl_loans",
 ]

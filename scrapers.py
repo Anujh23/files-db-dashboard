@@ -31,12 +31,16 @@ logger = logging.getLogger("scrapers")
 
 ELI_LOGIN_URL = "https://app.everydayloanindia.co.in/admin/loginindex"
 ELI_DATA_URL = "https://app.everydayloanindia.co.in/admin/dateWiseDisbursed"
+ELI_EXPORT_URL = "https://app.everydayloanindia.co.in/admin/disbursedDataExport"
+ELI_EXPORT_REFERER = "https://app.everydayloanindia.co.in/admin/disbursedData"
 
 ELI_USERNAME = os.getenv("ELI_USERNAME", "")
 ELI_PASSWORD = os.getenv("ELI_PASSWORD", "")
 
 NBL_ADMIN_URL = "https://app.nextbigloan.co.in/admin"
 NBL_DATA_URL = "https://app.nextbigloan.co.in/admin/dateWiseDisbursed"
+NBL_EXPORT_URL = "https://app.nextbigloan.co.in/admin/disbursedDataExport"
+NBL_EXPORT_REFERER = "https://app.nextbigloan.co.in/admin/disbursedData"
 
 NBL_USERNAME = os.getenv("NBL_USERNAME", "")
 NBL_PASSWORD = os.getenv("NBL_PASSWORD", "")
@@ -142,8 +146,16 @@ def _eli_login(session: requests.Session) -> None:
         }
     )
 
-    r = session.get(ELI_LOGIN_URL, timeout=60)
-    r.raise_for_status()
+    for attempt in range(3):
+        try:
+            r = session.get(ELI_LOGIN_URL, timeout=60)
+            r.raise_for_status()
+            break
+        except requests.exceptions.Timeout:
+            logger.warning("ELI: login page attempt %s timed out", attempt + 1)
+            if attempt == 2:
+                raise
+            time.sleep(3)
 
     soup = BeautifulSoup(r.text, "html.parser")
     form = soup.find("form")
@@ -186,40 +198,41 @@ def fetch_eli_loans(year: int, month: int) -> list[dict]:
     session = requests.Session()
     _eli_login(session)
 
-    # visit page once
+    logger.info("ELI: HTML scrape via %s", ELI_DATA_URL)
     session.get(ELI_DATA_URL, timeout=60)
-
-    payload = {
+    html_payload = {
         "startDate": start_d.strftime("%d-%m-%Y"),
         "endDate": end_d.strftime("%d-%m-%Y"),
         "submit": "Search",
     }
-    headers = {
+    html_headers = {
         "Referer": ELI_DATA_URL,
         "Origin": "https://app.everydayloanindia.co.in",
         "Content-Type": "application/x-www-form-urlencoded",
     }
+    records: list[dict] = []
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            r = session.post(ELI_DATA_URL, data=html_payload, headers=html_headers, timeout=90)
+            r.raise_for_status()
+            break
+        except requests.exceptions.Timeout:
+            logger.warning("ELI: HTML attempt %s timed out", attempt + 1)
+            if attempt == max_retries - 1:
+                raise
+            time.sleep(3)
 
-    logger.info("ELI: POST %s payload(startDate=%s,endDate=%s)", ELI_DATA_URL, payload.get("startDate"), payload.get("endDate"))
-    r = session.post(ELI_DATA_URL, data=payload, headers=headers, timeout=90)
-    r.raise_for_status()
-    logger.info("ELI: response %s bytes=%s", r.status_code, len(r.text))
     soup = BeautifulSoup(r.text, "html.parser")
-
     table = soup.find("table", {"id": "example2"}) or soup.find("table")
     if not table:
         logger.warning("ELI: table not found on response")
         return []
-
     thead = table.find("thead")
     header_tr = thead.find("tr") if thead else table.find("tr")
     headers_row = [th.get_text(" ", strip=True) for th in header_tr.find_all("th")] if header_tr else []
-    logger.info("ELI: header columns=%s", len(headers_row))
-
     tbody = table.find("tbody")
     trs = tbody.find_all("tr") if tbody else table.find_all("tr")[1:]
-
-    records: list[dict] = []
     for tr in trs:
         cells = [td.get_text(" ", strip=True) for td in tr.find_all(["td", "th"])]
         if not cells:
@@ -230,23 +243,18 @@ def fetch_eli_loans(year: int, month: int) -> list[dict]:
             records.append({f"col_{i+1}": v for i, v in enumerate(cells)})
 
     if not records:
-        logger.warning("ELI: parsed 0 table rows")
+        logger.warning("ELI: fetched 0 rows")
         return []
 
-    logger.info("ELI: parsed table rows=%s", len(records))
-
-    # Debug: show first row keys and sample date value
-    if records:
-        first_row = records[0]
-        logger.info("ELI: first row keys: %s", list(first_row.keys()))
-        disb_val = first_row.get("Disbursal Date")
-        logger.info("ELI: sample disbursal date value: %r", disb_val)
+    logger.info("ELI: raw rows=%s, first row keys: %s", len(records), list(records[0].keys()))
 
     normalized: list[dict] = []
     parse_fail = 0
     date_mismatch = 0
     for rec in records:
-        disbursal_date = _parse_date_any(rec.get("Disbursal Date"))
+        disbursal_date = _parse_date_any(
+            _get_field(rec, "Disbursal Date", "disbursal_date", "Disbursed Date", "Date")
+        )
         if not disbursal_date:
             parse_fail += 1
             continue
@@ -258,12 +266,12 @@ def fetch_eli_loans(year: int, month: int) -> list[dict]:
             {
                 "source": "ELI",
                 "disbursal_date": disbursal_date,
-                "credit_by": str(rec.get("Credit By") or "").strip(),
-                "loan_amount": _clean_amount(rec.get("Loan Amount")),
-                "branch": str(rec.get("Branch") or "").strip(),
-                "state": str(rec.get("State") or "").strip(),
-                "loan_no": str(rec.get("Loan No") or "").strip(),
-                "lead_id": str(rec.get("LeadID") or "").strip(),
+                "credit_by": str(_get_field(rec, "Credit By", "credit_by") or "").strip(),
+                "loan_amount": _clean_amount(_get_field(rec, "Loan Amount", "loan_amount")),
+                "branch": str(_get_field(rec, "Branch", "branch") or "").strip(),
+                "state": str(_get_field(rec, "State", "state") or "").strip(),
+                "loan_no": str(_get_field(rec, "Loan No", "loan_no") or "").strip(),
+                "lead_id": str(_get_field(rec, "LeadID", "lead_id", "Lead Id") or "").strip(),
             }
         )
 
@@ -376,11 +384,10 @@ def fetch_nbl_loans(year: int, month: int) -> list[dict]:
     logger.info("NBL: login OK (final url=%s, status=%d, content_length=%d)", 
         login_resp.url, login_resp.status_code, len(login_resp.text))
 
-    # NBL sometimes does not support DataTables JSON pagination reliably.
-    # Use ELI-style: visit page and POST the search form once.
+    # NBL export endpoint returns ALL historical data (ignores date range), so use HTML scrape instead
+    logger.info("NBL: HTML scrape via %s (startDate=%s, endDate=%s)", NBL_DATA_URL, start_d.strftime("%d-%m-%Y"), end_d.strftime("%d-%m-%Y"))
     session.get(NBL_DATA_URL, timeout=90)
-
-    headers = {
+    html_headers = {
         "Referer": NBL_DATA_URL,
         "Origin": "https://app.nextbigloan.co.in",
         "Content-Type": "application/x-www-form-urlencoded",
@@ -391,21 +398,11 @@ def fetch_nbl_loans(year: int, month: int) -> list[dict]:
         "endDate": end_d.strftime("%d-%m-%Y"),
         "submit": "Search",
     }
-
-    logger.info(
-        "NBL: POST %s payload(startDate=%s,endDate=%s)",
-        NBL_DATA_URL,
-        payload.get("startDate"),
-        payload.get("endDate"),
-    )
-    
-    # Retry logic for timeout issues
+    raw_rows: list[dict] = []
     max_retries = 3
-    timeout_seconds = 90
     for attempt in range(max_retries):
         try:
-            logger.info("NBL: attempt %s/%s with timeout=%ss", attempt + 1, max_retries, timeout_seconds)
-            r = session.post(NBL_DATA_URL, data=payload, headers=headers, timeout=timeout_seconds)
+            r = session.post(NBL_DATA_URL, data=payload, headers=html_headers, timeout=90)
             r.raise_for_status()
             break
         except requests.exceptions.Timeout:
@@ -413,29 +410,19 @@ def fetch_nbl_loans(year: int, month: int) -> list[dict]:
             if attempt == max_retries - 1:
                 raise
             time.sleep(3)
-    
-    logger.info("NBL: response %s bytes=%s", r.status_code, len(r.text))
-
-    raw_rows: list[dict] = _parse_html_table(r.text)
+    raw_rows = _parse_html_table(r.text)
 
     if not raw_rows:
         logger.warning("NBL: fetched 0 rows")
         return []
 
-    logger.info("NBL: raw rows=%s", len(raw_rows))
-    
-    # Debug: show first row keys and sample date value
-    if raw_rows:
-        first_row = raw_rows[0]
-        logger.info("NBL: first row keys: %s", list(first_row.keys()))
-        disb_val = _get_field(first_row, "disbursal_date", "Disbursal Date", "disbursed_date", "Disbursed Date")
-        logger.info("NBL: sample disbursal date value: %r", disb_val)
-    
+    logger.info("NBL: raw rows=%s, first row keys: %s", len(raw_rows), list(raw_rows[0].keys()))
+
     normalized: list[dict] = []
     parse_fail = 0
     date_mismatch = 0
     for rec in raw_rows:
-        disb = _get_field(rec, "disbursal_date", "Disbursal Date", "disbursed_date", "Disbursed Date")
+        disb = _get_field(rec, "disbursal_date", "Disbursal Date", "disbursed_date", "Disbursed Date", "Date")
         disb_date = _parse_date_any(disb)
         if not disb_date:
             parse_fail += 1

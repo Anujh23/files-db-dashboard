@@ -161,5 +161,5 @@ document.addEventListener('DOMContentLoaded', () => {
     setInterval(() => {
         updateAllData();
         checkCelebrations(currentMonth + 1, currentYear, true);
-    }, 30000);
+    }, 120000);
 });
