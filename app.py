@@ -161,8 +161,8 @@ def api_nbl_top_state(): return _top_state_response("NBL")
 
 
 # Load targets from environment variables with defaults
-ELI_TARGET = float(os.getenv("ELI_TARGET", "45000000"))  # ₹4.50 Cr default
-NBL_TARGET = float(os.getenv("NBL_TARGET", "52500000"))  # ₹5.25 Cr default
+ELI_TARGET = float(os.getenv("ELI_TARGET", "43000000"))  # ₹4.30 Cr default
+NBL_TARGET = float(os.getenv("NBL_TARGET", "50500000"))  # ₹5.05 Cr default
 CP_TARGET = float(os.getenv("CP_TARGET", "23500000"))  # ₹2.35 Cr default
 LR_TARGET = float(os.getenv("LR_TARGET", "24000000"))  # ₹2.40 Cr default
 
