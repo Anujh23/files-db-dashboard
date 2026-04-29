@@ -338,6 +338,71 @@ def cp_lr_page():
     return render_template("cp_lr.html")
 
 
+@app.get("/all")
+def all_products_page():
+    return render_template("all_products.html")
+
+
+@app.get("/api/all-stats")
+def api_all_stats():
+    month = int(request.args.get("month", date.today().month))
+    year = int(request.args.get("year", date.today().year))
+    rows, err = _get_loans(year, month)
+
+    by_src = {"ELI": [], "NBL": [], "CP": [], "LR": []}
+    for r in rows:
+        s = r.get("source")
+        if s in by_src:
+            by_src[s].append(r)
+
+    targets = {"ELI": ELI_TARGET, "NBL": NBL_TARGET, "CP": CP_TARGET, "LR": LR_TARGET}
+    out = {"month": month, "year": year, "error": err,
+           "days_in_month": calendar.monthrange(year, month)[1]}
+
+    combined_total = 0.0
+    for src in ("ELI", "NBL", "CP", "LR"):
+        total = sum(float(r.get("loan_amount") or 0.0) for r in by_src[src])
+        target = targets[src]
+        pct = round(min(100.0, (total / target) * 100.0), 2) if target else 0.0
+        key = src.lower()
+        out[f"{key}_total"] = total
+        out[f"{key}_target"] = target
+        out[f"{key}_count"] = len(by_src[src])
+        out[f"{key}_progress_pct"] = pct
+        out[f"{key}_score"] = pct
+        combined_total += total
+
+    combined_target = sum(targets.values())
+    out["combined_total"] = combined_total
+    out["combined_target"] = combined_target
+    out["combined_progress_pct"] = (
+        round(min(100.0, (combined_total / combined_target) * 100.0), 2) if combined_target else 0.0
+    )
+    return jsonify(out)
+
+
+@app.get("/api/all-daily")
+def api_all_daily():
+    month = int(request.args.get("month", date.today().month))
+    year = int(request.args.get("year", date.today().year))
+    rows, err = _get_loans(year, month)
+
+    days, eli_t = daily_totals(rows, "ELI", year, month)
+    _, nbl_t = daily_totals(rows, "NBL", year, month)
+    _, cp_t = daily_totals(rows, "CP", year, month)
+    _, lr_t = daily_totals(rows, "LR", year, month)
+
+    return jsonify({
+        "current_month": month_name(year, month),
+        "error": err,
+        "days": days,
+        "eli_daily_totals": eli_t,
+        "nbl_daily_totals": nbl_t,
+        "cp_daily_totals": cp_t,
+        "lr_daily_totals": lr_t,
+    })
+
+
 @app.route('/favicon.ico')
 def favicon():
     static_dir = os.path.join(app.root_path, 'static')

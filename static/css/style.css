@@ -212,6 +212,24 @@ body {
     box-shadow: 0 2px 8px rgba(139,92,246,0.4);
 }
 
+/* CP / LR cards (blue tones) */
+.cp-card::before { background: linear-gradient(90deg, #0ea5e9, #7dd3fc); }
+.lr-card::before { background: linear-gradient(90deg, #1e40af, #60a5fa); }
+.cp-card .metric-title { color: #0ea5e9 !important; }
+.lr-card .metric-title { color: #1e40af !important; }
+.cp-card .metric-value { color: #0ea5e9; }
+.lr-card .metric-value { color: #1e40af; }
+
+.cp-fill {
+    background: linear-gradient(90deg, #0ea5e9, #7dd3fc);
+    box-shadow: 0 2px 8px rgba(14,165,233,0.4);
+}
+
+.lr-fill {
+    background: linear-gradient(90deg, #1e40af, #60a5fa);
+    box-shadow: 0 2px 8px rgba(30,64,175,0.4);
+}
+
 .progress-text {
     color: #6a7a8e;
     font-size: 0.72rem;

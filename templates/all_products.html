@@ -1,0 +1,138 @@
+<!-- templates/all_products.html -->
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - All Products</title>
+    <link rel="icon" href="{{ url_for('static', filename='images/logo.png') }}" type="image/png">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        /* All Products page — full-width layout (no leader sections) */
+        .all-products-page .metrics-grid {
+            grid-column: 4 / -1;
+            grid-template-columns: repeat(4, 1fr);
+        }
+        .all-products-page .daily-graph-section {
+            grid-column: 1 / -1;
+        }
+        .all-products-page .daily-graph-container {
+            height: 460px;
+        }
+        @media (max-width: 1200px) {
+            .all-products-page .metrics-grid {
+                grid-column: 1 / -1;
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .all-products-page .daily-graph-container { height: 360px; }
+        }
+        @media (max-width: 768px) {
+            .all-products-page .metrics-grid { grid-template-columns: 1fr; }
+            .all-products-page .daily-graph-container { height: 240px; }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="dashboard all-products-page">
+        <div class="header">
+            <div class="welcome-text">All Products Dashboard</div>
+            <div style="display:flex;gap:10px;align-items:center;">
+                <a href="/"
+                    style="text-decoration: none; padding: 8px 16px; background: linear-gradient(135deg, #5d9cec, #8b5cf6); color: white; border-radius: 20px; font-size: 0.9rem; font-weight: 500;">
+                    ELI/NBL
+                </a>
+                <a href="/cp-lr"
+                    style="text-decoration: none; padding: 8px 16px; background: linear-gradient(135deg, #0ea5e9, #1e40af); color: white; border-radius: 20px; font-size: 0.9rem; font-weight: 500;">
+                    CP/LR
+                </a>
+            </div>
+        </div>
+
+        <div class="profile-section">
+            <div class="profile-card">
+                <div class="profile-avatar">
+                    <img id="profile-img" src="{{ url_for('static', filename='images/logo.png') }}" alt="Company Logo">
+                </div>
+            </div>
+
+            <div class="focus-tracker leader-progress-container">
+                <div class="focus-title">All Products Combined Progress</div>
+                <div class="leader-progress-track">
+                    <div id="focus-bar" class="leader-progress-bar"></div>
+                </div>
+                <div id="focus-text" class="leader-progress-text">0% of ₹0</div>
+            </div>
+        </div>
+
+        <div class="metrics-grid">
+            <div class="metric-card eli-card">
+                <div class="metric-title">ELI Progress</div>
+                <div id="eli-score" class="metric-value">0%</div>
+                <div class="progress-container">
+                    <div class="progress-track">
+                        <div id="eli-progress-bar" class="progress-fill eli-fill"></div>
+                    </div>
+                    <div id="eli-progress-text" class="progress-text">Loading...</div>
+                </div>
+                <div class="data-update" id="eli-update">Live</div>
+            </div>
+
+            <div class="metric-card nbl-card">
+                <div class="metric-title">NBL Progress</div>
+                <div id="nbl-score" class="metric-value">0%</div>
+                <div class="progress-container">
+                    <div class="progress-track">
+                        <div id="nbl-progress-bar" class="progress-fill nbl-fill"></div>
+                    </div>
+                    <div id="nbl-progress-text" class="progress-text">Loading...</div>
+                </div>
+                <div class="data-update" id="nbl-update">Live</div>
+            </div>
+
+            <div class="metric-card cp-card">
+                <div class="metric-title">CP Progress</div>
+                <div id="cp-score" class="metric-value">0%</div>
+                <div class="progress-container">
+                    <div class="progress-track">
+                        <div id="cp-progress-bar" class="progress-fill cp-fill"></div>
+                    </div>
+                    <div id="cp-progress-text" class="progress-text">Loading...</div>
+                </div>
+                <div class="data-update" id="cp-update">Live</div>
+            </div>
+
+            <div class="metric-card lr-card">
+                <div class="metric-title">LR Progress</div>
+                <div id="lr-score" class="metric-value">0%</div>
+                <div class="progress-container">
+                    <div class="progress-track">
+                        <div id="lr-progress-bar" class="progress-fill lr-fill"></div>
+                    </div>
+                    <div id="lr-progress-text" class="progress-text">Loading...</div>
+                </div>
+                <div class="data-update" id="lr-update">Live</div>
+            </div>
+        </div>
+
+        <div class="daily-graph-section">
+            <div class="graph-controls">
+                <div class="graph-title" id="graph-title">Daily Performance: All Products</div>
+            </div>
+            <div class="daily-graph-container">
+                <div class="graph-canvas-container">
+                    <canvas id="dailyGraph"></canvas>
+                </div>
+                <div class="tooltip" id="graph-tooltip"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/utils.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/celebrations.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/all_products_dashboard.js') }}"></script>
+</body>
+
+</html>
