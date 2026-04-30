@@ -10,122 +10,375 @@
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        /* All Products page — full-width layout (no leader sections) */
-        .all-products-page .metrics-grid {
-            grid-column: 4 / -1;
-            grid-template-columns: repeat(4, 1fr);
+        /* ── Big-screen dashboard scale ───────────────── */
+        .all-products-page {
+            max-width: none !important;
+            min-height: calc(100vh - 24px);
         }
-        .all-products-page .daily-graph-section {
+        .all-products-page .welcome-text { font-size: 1.6rem; }
+
+        /* ── Rotator section (full width hero) ────────── */
+        .all-products-page .rotator-section {
             grid-column: 1 / -1;
+            background: #e4e9f0;
+            border-radius: 24px;
+            padding: 22px 28px 18px;
+            box-shadow: 10px 10px 22px #c2cad6, -10px -10px 22px #ffffff;
+            position: relative;
+            overflow: hidden;
         }
-        .all-products-page .daily-graph-container {
-            height: 460px;
+
+        .rotator-tabs {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid rgba(180,192,210,0.3);
+            padding-bottom: 14px;
+            margin-bottom: 22px;
+        }
+        .rotator-tab-list { display: flex; gap: 10px; flex-wrap: wrap; }
+        .rotator-tab {
+            background: transparent;
+            border: none;
+            padding: 12px 24px;
+            font-size: 1.05rem;
+            font-weight: 800;
+            color: #8a9bb0;
+            cursor: pointer;
+            border-radius: 12px;
+            letter-spacing: 0.6px;
+            text-transform: uppercase;
+            transition: background 0.2s, color 0.2s;
+        }
+        .rotator-tab:hover { background: rgba(255,255,255,0.5); }
+        .rotator-tab.active {
+            color: #fff;
+            background: var(--accent, #5d9cec);
+            box-shadow: 0 6px 14px rgba(0,0,0,0.14);
+        }
+        .rotator-pause {
+            background: #dce2ec;
+            border: none;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 1.2rem;
+            color: #2d3748;
+            box-shadow: 3px 3px 6px #c2cad6, -2px -2px 5px #ffffff;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .rotator-pause:active { box-shadow: inset 2px 2px 4px #c2cad6; }
+
+        .rotator-stage {
+            opacity: 1;
+            transition: opacity 0.35s ease;
+        }
+        .rotator-stage.fading { opacity: 0; }
+
+        /* ── ALL view: cards + chart ─────────────────── */
+        .rotator-view[hidden] { display: none !important; }
+        .all-view .all-metrics {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+            margin-bottom: 22px;
+        }
+        .all-view .metric-card {
+            padding: 22px 24px;
+        }
+        .all-view .metric-title { font-size: 1rem; }
+        .all-view .metric-value { font-size: 2.6rem; }
+        .all-view .progress-text { font-size: 0.9rem; }
+        .all-view .data-update { font-size: 0.85rem; }
+        .all-view .all-chart { height: 420px; }
+
+        /* ── Product spotlight view ──────────────────── */
+        .product-view {
+            --accent: #5d9cec;
+        }
+        .product-view[data-product="ELI"] { --accent: #5d9cec; }
+        .product-view[data-product="NBL"] { --accent: #8b5cf6; }
+        .product-view[data-product="CP"]  { --accent: #0ea5e9; }
+        .product-view[data-product="LR"]  { --accent: #1e40af; }
+
+        .product-header {
+            display: flex;
+            align-items: center;
+            gap: 28px;
+            padding: 22px 28px;
+            background: rgba(255,255,255,0.55);
+            border-left: 8px solid var(--accent);
+            border-radius: 16px;
+            box-shadow: inset 2px 2px 6px #d2d9e3, inset -2px -2px 6px #f4f7fb;
+            margin-bottom: 22px;
+        }
+        .product-title-block {
+            min-width: 280px;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+        .product-title {
+            font-size: 3rem;
+            font-weight: 900;
+            color: var(--accent);
+            letter-spacing: 1.5px;
+            line-height: 1;
+        }
+        .product-fullname {
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: #5a6c80;
+            letter-spacing: 0.4px;
+        }
+        .product-kpis {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 22px;
+            flex: 1;
+        }
+        .product-kpi {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .product-kpi label {
+            font-size: 0.85rem;
+            font-weight: 800;
+            color: #8a9bb0;
+            text-transform: uppercase;
+            letter-spacing: 1.4px;
+        }
+        .product-kpi span {
+            font-size: 2.1rem;
+            font-weight: 900;
+            color: #2d3748;
+            line-height: 1.05;
+        }
+        .product-kpi.pct span { color: var(--accent); }
+
+        .product-body {
+            display: grid;
+            grid-template-columns: 1.6fr 1fr;
+            gap: 24px;
+            min-height: 440px;
+        }
+        .product-chart-side { height: 440px; }
+
+        .product-leaders-side {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+        }
+        .leaders-block-title {
+            font-size: 0.95rem;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 1.6px;
+            color: #8a9bb0;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .leaders-block-title::before {
+            content: '';
+            width: 32px;
+            height: 4px;
+            border-radius: 2px;
+            background: var(--accent);
+        }
+        .product-leaders-list { list-style: none; padding: 0; margin: 0; }
+        .product-leaders-list li {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 14px 18px;
+            border-radius: 14px;
+            margin-bottom: 10px;
+            background: rgba(255,255,255,0.55);
+            box-shadow: 2px 2px 6px #d2d9e3, -2px -2px 6px #f4f7fb;
+        }
+        .product-leaders-list li:last-child { margin-bottom: 0; }
+        .product-rank {
+            width: 38px;
+            height: 38px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 800;
+            color: #fff;
+            font-size: 1.05rem;
+            flex-shrink: 0;
+            box-shadow: 3px 3px 6px #c2cad6, -2px -2px 5px #ffffff;
+        }
+        .product-leaders-list li:nth-child(1) .product-rank { background: linear-gradient(135deg, #f6c549, #e8a020); }
+        .product-leaders-list li:nth-child(2) .product-rank { background: linear-gradient(135deg, #a8b8c8, #8a9aaa); }
+        .product-leaders-list li:nth-child(3) .product-rank { background: linear-gradient(135deg, #c98a5a, #a86c3a); }
+        .product-leaders-list .leader-name {
+            flex: 1;
+            color: #2d3748;
+            font-size: 1.25rem;
+            font-weight: 700;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .product-leaders-list .leader-val {
+            color: var(--accent);
+            font-size: 1.25rem;
+            font-weight: 800;
+            white-space: nowrap;
+        }
+        .product-leaders-list .leaders-empty {
+            color: #9aabb8;
+            font-style: italic;
+            font-size: 1.05rem;
+            justify-content: center;
+        }
+
+        .product-branch-card {
+            background: #dce2ec;
+            border-radius: 14px;
+            padding: 20px 22px;
+            border-left: 5px solid var(--accent);
+            box-shadow: inset 3px 3px 7px #c2cad6, inset -3px -3px 7px #f2f6fa;
+            text-align: center;
+        }
+        .product-branch-name {
+            font-size: 1.65rem;
+            font-weight: 800;
+            color: #2d3748;
+            margin: 4px 0;
+            line-height: 1.15;
+        }
+        .product-branch-val {
+            font-size: 1.4rem;
+            font-weight: 800;
+            color: var(--accent);
+            margin-top: 4px;
+        }
+
+        /* Countdown bar */
+        .rotator-progress {
+            margin-top: 18px;
+            height: 4px;
+            background: rgba(180,192,210,0.4);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        .rotator-progress-fill {
+            height: 100%;
+            background: var(--accent, #5d9cec);
+            transform-origin: left;
+            transform: scaleX(0);
+        }
+        .rotator-progress-fill.run {
+            animation: rotator-countdown 10s linear forwards;
+        }
+        @keyframes rotator-countdown {
+            from { transform: scaleX(0); }
+            to   { transform: scaleX(1); }
+        }
+
+        @media (max-width: 1400px) {
+            .product-kpi span { font-size: 1.7rem; }
+            .product-title { font-size: 2.4rem; }
+            .product-title-block { min-width: 220px; }
         }
         @media (max-width: 1200px) {
-            .all-products-page .metrics-grid {
-                grid-column: 1 / -1;
-                grid-template-columns: repeat(2, 1fr);
-            }
-            .all-products-page .daily-graph-container { height: 360px; }
+            .all-view .all-metrics { grid-template-columns: repeat(2, 1fr); }
+            .product-body { grid-template-columns: 1fr; }
+            .product-kpis { grid-template-columns: repeat(2, 1fr); }
         }
         @media (max-width: 768px) {
-            .all-products-page .metrics-grid { grid-template-columns: 1fr; }
-            .all-products-page .daily-graph-container { height: 240px; }
+            .all-view .all-metrics { grid-template-columns: 1fr; }
+            .product-header { flex-direction: column; align-items: flex-start; gap: 14px; }
+            .product-title-block { min-width: 0; }
+            .product-kpis { grid-template-columns: repeat(2, 1fr); width: 100%; }
+            .rotator-tab { padding: 8px 14px; font-size: 0.85rem; }
         }
     </style>
 </head>
 
 <body>
     <div class="dashboard all-products-page">
-        <div class="header">
-            <div class="welcome-text">All Products Dashboard</div>
-            <div style="display:flex;gap:10px;align-items:center;">
-                <a href="/"
-                    style="text-decoration: none; padding: 8px 16px; background: linear-gradient(135deg, #5d9cec, #8b5cf6); color: white; border-radius: 20px; font-size: 0.9rem; font-weight: 500;">
-                    ELI/NBL
-                </a>
-                <a href="/cp-lr"
-                    style="text-decoration: none; padding: 8px 16px; background: linear-gradient(135deg, #0ea5e9, #1e40af); color: white; border-radius: 20px; font-size: 0.9rem; font-weight: 500;">
-                    CP/LR
-                </a>
-            </div>
-        </div>
-
-        <div class="profile-section">
-            <div class="profile-card">
-                <div class="profile-avatar">
-                    <img id="profile-img" src="{{ url_for('static', filename='images/logo.png') }}" alt="Company Logo">
+        <div class="rotator-section" id="rotator">
+            <div class="rotator-tabs">
+                <div class="rotator-tab-list" id="rotator-tabs">
+                    <button class="rotator-tab active" data-view="ALL">All Products</button>
+                    <button class="rotator-tab" data-view="ELI">ELI</button>
+                    <button class="rotator-tab" data-view="NBL">NBL</button>
+                    <button class="rotator-tab" data-view="CP">CP</button>
+                    <button class="rotator-tab" data-view="LR">LR</button>
                 </div>
+                <button class="rotator-pause" id="rotator-pause" title="Pause / Resume">⏸</button>
             </div>
 
-            <div class="focus-tracker leader-progress-container">
-                <div class="focus-title">All Products Combined Progress</div>
-                <div class="leader-progress-track">
-                    <div id="focus-bar" class="leader-progress-bar"></div>
-                </div>
-                <div id="focus-text" class="leader-progress-text">0% of ₹0</div>
-            </div>
-        </div>
-
-        <div class="metrics-grid">
-            <div class="metric-card eli-card">
-                <div class="metric-title">ELI Progress</div>
-                <div id="eli-score" class="metric-value">0%</div>
-                <div class="progress-container">
-                    <div class="progress-track">
-                        <div id="eli-progress-bar" class="progress-fill eli-fill"></div>
+            <div class="rotator-stage" id="rotator-stage">
+                <div class="rotator-view all-view" id="view-all">
+                    <div class="all-metrics">
+                        {% for p in [
+                            {'key': 'eli', 'label': 'ELI'},
+                            {'key': 'nbl', 'label': 'NBL'},
+                            {'key': 'cp',  'label': 'CP'},
+                            {'key': 'lr',  'label': 'LR'}
+                        ] %}
+                        <div class="metric-card {{ p.key }}-card">
+                            <div class="metric-title">{{ p.label }} Progress</div>
+                            <div id="{{ p.key }}-score" class="metric-value">0%</div>
+                            <div class="progress-container">
+                                <div class="progress-track">
+                                    <div id="{{ p.key }}-progress-bar" class="progress-fill {{ p.key }}-fill"></div>
+                                </div>
+                                <div id="{{ p.key }}-progress-text" class="progress-text">Loading...</div>
+                            </div>
+                            <div class="data-update" id="{{ p.key }}-update">Live</div>
+                        </div>
+                        {% endfor %}
                     </div>
-                    <div id="eli-progress-text" class="progress-text">Loading...</div>
-                </div>
-                <div class="data-update" id="eli-update">Live</div>
-            </div>
-
-            <div class="metric-card nbl-card">
-                <div class="metric-title">NBL Progress</div>
-                <div id="nbl-score" class="metric-value">0%</div>
-                <div class="progress-container">
-                    <div class="progress-track">
-                        <div id="nbl-progress-bar" class="progress-fill nbl-fill"></div>
+                    <div class="all-chart">
+                        <canvas id="dailyGraph"></canvas>
                     </div>
-                    <div id="nbl-progress-text" class="progress-text">Loading...</div>
                 </div>
-                <div class="data-update" id="nbl-update">Live</div>
-            </div>
 
-            <div class="metric-card cp-card">
-                <div class="metric-title">CP Progress</div>
-                <div id="cp-score" class="metric-value">0%</div>
-                <div class="progress-container">
-                    <div class="progress-track">
-                        <div id="cp-progress-bar" class="progress-fill cp-fill"></div>
+                <div class="rotator-view product-view" id="view-product" data-product="ELI" hidden>
+                    <div class="product-header">
+                        <div class="product-title-block">
+                            <div class="product-title" id="prod-title">ELI</div>
+                            <div class="product-fullname" id="prod-fullname">Everyday Loan India</div>
+                        </div>
+                        <div class="product-kpis">
+                            <div class="product-kpi"><label>Target</label><span id="prod-target">₹0</span></div>
+                            <div class="product-kpi"><label>Achieved</label><span id="prod-achieved">₹0</span></div>
+                            <div class="product-kpi pct"><label>Progress</label><span id="prod-pct">0%</span></div>
+                            <div class="product-kpi"><label>Loans</label><span id="prod-count">0</span></div>
+                        </div>
                     </div>
-                    <div id="cp-progress-text" class="progress-text">Loading...</div>
-                </div>
-                <div class="data-update" id="cp-update">Live</div>
-            </div>
-
-            <div class="metric-card lr-card">
-                <div class="metric-title">LR Progress</div>
-                <div id="lr-score" class="metric-value">0%</div>
-                <div class="progress-container">
-                    <div class="progress-track">
-                        <div id="lr-progress-bar" class="progress-fill lr-fill"></div>
+                    <div class="product-body">
+                        <div class="product-chart-side">
+                            <canvas id="productGraph"></canvas>
+                        </div>
+                        <div class="product-leaders-side">
+                            <div class="leaders-block-title">Top Performers</div>
+                            <ul class="product-leaders-list" id="prod-leaders">
+                                <li class="leaders-empty">Loading…</li>
+                            </ul>
+                            <div class="leaders-block-title">Top Branch</div>
+                            <div class="product-branch-card">
+                                <div class="product-branch-name" id="prod-branch-name">—</div>
+                                <div class="product-branch-val" id="prod-branch-val">₹0</div>
+                            </div>
+                        </div>
                     </div>
-                    <div id="lr-progress-text" class="progress-text">Loading...</div>
                 </div>
-                <div class="data-update" id="lr-update">Live</div>
             </div>
-        </div>
 
-        <div class="daily-graph-section">
-            <div class="graph-controls">
-                <div class="graph-title" id="graph-title">Daily Performance: All Products</div>
-            </div>
-            <div class="daily-graph-container">
-                <div class="graph-canvas-container">
-                    <canvas id="dailyGraph"></canvas>
-                </div>
-                <div class="tooltip" id="graph-tooltip"></div>
+            <div class="rotator-progress">
+                <div class="rotator-progress-fill" id="rotator-progress-fill"></div>
             </div>
         </div>
     </div>
