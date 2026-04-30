@@ -53,7 +53,7 @@ async function fetchLeaders() {
     const results = await Promise.all(products.map(async p => {
         const src = p.toLowerCase();
         const [t3, br] = await Promise.all([
-            fetch(`/api/${src}-top3?month=${currentMonth + 1}&year=${currentYear}`).then(r => r.json()),
+            fetch(`/api/${src}-top3?month=${currentMonth + 1}&year=${currentYear}&limit=5`).then(r => r.json()),
             fetch(`/api/${src}-top-state?month=${currentMonth + 1}&year=${currentYear}`).then(r => r.json()),
         ]);
         return {
@@ -190,7 +190,7 @@ function renderProductView(product) {
 
     const list = document.getElementById('prod-leaders');
     list.innerHTML = '';
-    const items = (leaders.top3 || []).slice(0, 3);
+    const items = (leaders.top3 || []).slice(0, 5);
     if (!items.length) {
         const li = document.createElement('li');
         li.className = 'leaders-empty';

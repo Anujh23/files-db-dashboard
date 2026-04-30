@@ -5,7 +5,7 @@ def month_name(year: int, month: int) -> str:
     return f"{calendar.month_name[month]} {year}"
 
 
-def top3(rows: list[dict], source: str) -> list[dict]:
+def top3(rows: list[dict], source: str, limit: int = 3) -> list[dict]:
     src_rows = [r for r in rows if r.get("source") == source]
     if not src_rows:
         return []
@@ -18,7 +18,7 @@ def top3(rows: list[dict], source: str) -> list[dict]:
             continue
         totals[cm] = totals.get(cm, 0.0) + float(amt)
 
-    top = sorted(totals.items(), key=lambda x: x[1], reverse=True)[:3]
+    top = sorted(totals.items(), key=lambda x: x[1], reverse=True)[:limit]
     return [{"CM_Name": k, "Achievement": float(v)} for k, v in top]
 
 

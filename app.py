@@ -68,8 +68,9 @@ def _handle_unexpected_error(e):
 def _top3_response(source: str):
     month = int(request.args.get("month", date.today().month))
     year = int(request.args.get("year", date.today().year))
+    limit = max(1, min(20, int(request.args.get("limit", 3))))
     rows, err = _get_loans(year, month)
-    return jsonify({"top3": top3(rows, source), "error": err})
+    return jsonify({"top3": top3(rows, source, limit), "error": err})
 
 
 def _top_state_response(source: str):

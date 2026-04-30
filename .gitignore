@@ -2,3 +2,7 @@
 __pycache__/
 *.pyc
 .history/
+
+# Playwright test artifacts
+.playwright-mcp/
+/*.png
